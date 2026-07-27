@@ -7,24 +7,23 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
-  <link rel="icon" href="/favicon.ico" type="image/svg+xml" />
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div class="bg-layer" aria-hidden="true"></div>
 
   <header class="hud-top">
-    <a href="/" class="brand">
+    <a href="index.html" class="brand">
       <span class="brand-mark" aria-hidden="true">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="1.5" rx=".5" fill="#fafffd"/><rect x="2" y="7.25" width="9" height="1.5" rx=".5" fill="#fafffd" opacity=".9"/><rect x="2" y="10.5" width="11" height="1.5" rx=".5" fill="#fafffd" opacity=".75"/></svg>
       </span>
       字幕工具箱
     </a>
     <nav class="hud-nav">
-      <a href="/" class="active">首页</a>
-      <a href="/replace">术语替换</a>
-      <a href="/fix">SRT 修复</a>
-      <a href="/audit">术语体检</a>
+      <a href="index.html" class="active">首页</a>
+      <a href="replace.html">术语替换</a>
+      <a href="fix.html">SRT 修复</a>
     </nav>
   </header>
 
@@ -33,22 +32,16 @@
     <p class="page-sub">选择下方模块进入对应功能</p>
 
     <div class="home-grid">
-      <a class="tile" href="/replace">
+      <a class="tile" href="replace.html">
         <div class="tile-icon">词</div>
         <h3>术语替换</h3>
-        <p>按术语表批量替换，并可对比网站结果与 VS Code 人工替换差异。</p>
+        <p>上传本地化清单与字幕，将 Source 列内容替换为 Target 列。</p>
         <span class="tile-go">进入模块 →</span>
       </a>
-      <a class="tile" href="/fix">
+      <a class="tile" href="fix.html">
         <div class="tile-icon">幕</div>
         <h3>SRT 批量修复</h3>
         <p>批量规范化字幕格式，便于导入剪映。</p>
-        <span class="tile-go">进入模块 →</span>
-      </a>
-      <a class="tile" href="/audit">
-        <div class="tile-icon">检</div>
-        <h3>术语表体检</h3>
-        <p>检查表里长短词条嵌套、重复等，方便人工维护替换表。</p>
         <span class="tile-go">进入模块 →</span>
       </a>
     </div>

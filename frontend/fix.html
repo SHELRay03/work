@@ -7,20 +7,21 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
-  <link rel="icon" href="/favicon.ico" type="image/svg+xml" />
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body>
   <div class="bg-layer" aria-hidden="true"></div>
   <header class="hud-top">
-    <a href="/" class="brand"><span class="brand-mark" aria-hidden="true">
+    <a href="index.html" class="brand"><span class="brand-mark" aria-hidden="true">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="1.5" rx=".5" fill="#fafffd"/><rect x="2" y="7.25" width="9" height="1.5" rx=".5" fill="#fafffd" opacity=".9"/><rect x="2" y="10.5" width="11" height="1.5" rx=".5" fill="#fafffd" opacity=".75"/></svg>
       </span>字幕工具箱</a>
-    <nav class="hud-nav"><a href="/">首页</a><a href="/replace">术语替换</a><a href="/fix" class="active">SRT 修复</a><a href="/audit">术语体检</a></nav>
+    <nav class="hud-nav"><a href="index.html">首页</a><a href="replace.html">术语替换</a><a href="fix.html" class="active">SRT 修复</a></nav>
   </header>
   <main class="hud-main">
     <h1 class="page-title">SRT 批量修复</h1>
-    <p class="page-sub">统一换行与时间轴，ASS 往返，便于导入剪映（不调整每行字数）</p>
+    <p class="page-sub">统一换行与时间轴，便于导入剪映</p>
     <section class="panel">
       <div class="panel-head"><span class="panel-dot"></span><h2>功能操作</h2></div>
       <p class="card-desc">ZIP 内任意层级文件夹中的 .srt 都会被找到；输出为扁平文件名。</p>
@@ -29,16 +30,102 @@
       <div class="status" id="statusFix"></div>
     </section>
   </main>
-  <script src="/static/common.js"></script>
+  <script src="srt.js"></script>
   <script>
-    btnFix.onclick = () => {
+    const btnFix = document.getElementById('btnFix');
+    const statusFix = document.getElementById('statusFix');
+    const subsFix = document.getElementById('subsFix');
+
+    btnFix.onclick = async () => {
       const z = subsFix.files[0];
-      if (!z) return alert("请选择字幕 ZIP");
-      const fd = new FormData();
-      fd.append("subtitles", z);
-      fd.append("round_trip", "true");
-      apiPost("/api/fix-srt", fd, statusFix, "fix_result.zip", btnFix);
+      if (!z) return alert('请选择字幕 ZIP');
+      
+      statusFix.className = 'status';
+      statusFix.textContent = '处理中…';
+      btnFix.disabled = true;
+      
+      try {
+        const arrayBuffer = await z.arrayBuffer();
+        const zip = await JSZip.loadAsync(arrayBuffer);
+        
+        const outZip = new JSZip();
+        let processedCount = 0;
+        const reports = [];
+        
+        for (const [name, file] of Object.entries(zip.files)) {
+          if (file.dir || !name.toLowerCase().endsWith('.srt')) continue;
+          
+          const content = await file.async('string');
+          const subs = parseSrt(content);
+          
+          // 规范化
+          for (const line of subs) {
+            if (line.text) {
+              line.text = line.text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+              const parts = line.text.split('\n').map(p => p.trim()).filter(p => p);
+              line.text = parts.join('\n');
+            }
+            if (line.end <= line.start) {
+              line.end = line.start + 2000;
+            }
+          }
+          
+          // 检查
+          const report = { fileName: name, eventCount: subs.length, warnings: [] };
+          for (let i = 0; i < subs.length; i++) {
+            if (!subs[i].text || !subs[i].text.trim()) {
+              report.warnings.push(`事件 ${i + 1}: 空文本`);
+            }
+            const dur = subs[i].end - subs[i].start;
+            if (dur > 7000) {
+              report.warnings.push(`事件 ${i + 1}: 时长 ${dur}ms > 7s`);
+            }
+            if (i > 0 && subs[i].start < subs[i - 1].end) {
+              report.warnings.push(`事件 ${i + 1}: 与前一条重叠`);
+            }
+          }
+          reports.push(report);
+          
+          const outContent = generateSrt(subs);
+          const outName = name.split('/').pop();
+          outZip.file(outName, outContent);
+          processedCount++;
+        }
+        
+        // 生成报告
+        let reportTxt = `处理文件数: ${processedCount}\n\n`;
+        reports.forEach(r => {
+          reportTxt += `=== ${r.fileName} ===\n`;
+          reportTxt += `事件数: ${r.eventCount}\n`;
+          if (r.warnings.length > 0) {
+            reportTxt += `警告: ${r.warnings.join('\n')}\n`;
+          }
+          reportTxt += '\n';
+        });
+        outZip.file('fix_report.txt', reportTxt);
+        
+        // 下载
+        const blob = await outZip.generateAsync({ type: 'blob' });
+        downloadBlob(blob, 'fix_result.zip');
+        
+        statusFix.className = 'status ok';
+        statusFix.textContent = `已完成，处理 ${processedCount} 个文件`;
+      } catch (e) {
+        statusFix.className = 'status err';
+        statusFix.textContent = e.message;
+      } finally {
+        btnFix.disabled = false;
+      }
     };
+    
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
   </script>
 </body>
 </html>

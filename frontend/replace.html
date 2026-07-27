@@ -7,25 +7,26 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
-  <link rel="icon" href="/favicon.ico" type="image/svg+xml" />
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
   <div class="bg-layer" aria-hidden="true"></div>
   <header class="hud-top">
-    <a href="/" class="brand"><span class="brand-mark" aria-hidden="true">
+    <a href="index.html" class="brand"><span class="brand-mark" aria-hidden="true">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="1.5" rx=".5" fill="#fafffd"/><rect x="2" y="7.25" width="9" height="1.5" rx=".5" fill="#fafffd" opacity=".9"/><rect x="2" y="10.5" width="11" height="1.5" rx=".5" fill="#fafffd" opacity=".75"/></svg>
       </span>字幕工具箱</a>
     <nav class="hud-nav">
-      <a href="/">首页</a>
-      <a href="/replace" class="active">术语替换</a>
-      <a href="/fix">SRT 修复</a>
-      <a href="/audit">术语体检</a>
+      <a href="index.html">首页</a>
+      <a href="replace.html" class="active">术语替换</a>
+      <a href="fix.html">SRT 修复</a>
     </nav>
   </header>
   <main class="hud-main">
     <h1 class="page-title">术语替换</h1>
-    <p class="page-sub">本地化清单 → 扫描命中 → 勾选后批量替换（支持 English / Spanish / Korean / Japanese）</p>
+    <p class="page-sub">本地化清单 Source 列将会替换为 Target 列</p>
 
     <section class="panel">
       <div class="panel-head"><span class="panel-dot"></span><h2>1. 上传与扫描</h2></div>
@@ -79,46 +80,89 @@
       </div>
       <div class="actions">
         <button type="button" id="btnReplace">按勾选开始替换</button>
-        <a class="link" href="/api/sample-glossary">示例术语表</a>
-        <a class="link" href="/api/sample-subtitles">示例字幕</a>
       </div>
       <div class="status" id="statusReplace"></div>
     </section>
-
-    <section class="panel">
-      <div class="panel-head"><span class="panel-dot"></span><h2>3. 与人工替换对比</h2></div>
-      <div class="field">
-        <label>网站替换 (.zip)</label>
-        <input type="file" id="zipToolkit" accept=".zip" />
-      </div>
-      <div class="field">
-        <label>VS Code 人工 (.zip)</label>
-        <input type="file" id="zipManual" accept=".zip" />
-      </div>
-      <div class="actions">
-        <button type="button" id="btnCompare" class="btn-secondary">对比差异</button>
-        <button type="button" id="btnCompareDownload" class="btn-secondary">下载对比报告</button>
-      </div>
-      <div class="status" id="statusCompare"></div>
-      <p class="compare-summary" id="compareSummary"></p>
-      <div class="diff-table-wrap" id="compareTableWrap" hidden>
-        <table class="diff-table">
-          <thead>
-            <tr><th>文件</th><th>句序</th><th>时间</th><th>网站</th><th>人工</th></tr>
-          </thead>
-          <tbody id="compareBody"></tbody>
-        </table>
-      </div>
-    </section>
   </main>
-  <script src="/static/common.js"></script>
+  <script src="srt.js"></script>
   <script>
     let scanData = null;
     let selectedIds = new Set();
     let activeSource = null;
+    let glossaryEntries = [];
+    let subtitleFiles = [];
+
+    const SOURCE_ALIASES = ['source', '中文', '原文', '源文', '词条', '术语', 'chinese', 'zh', '中文词条', '中文原文', '源'];
+    const TARGET_ALIASES = ['target', '译文', '英文', '目标语', '翻译', 'english', 'en', '外语', '外文', '英文译名', '译名', '替换', '替换为', '替换内容', '目标文本', '目标'];
+
+    function normalizeHeader(name) {
+      return String(name).trim().toLowerCase().replace(/\s+/g, '');
+    }
+
+    function findColumn(sheet, aliases) {
+      const headerRow = sheet[0] || [];
+      for (let i = 0; i < headerRow.length; i++) {
+        const normalized = normalizeHeader(headerRow[i]);
+        if (aliases.includes(normalized)) {
+          return i;
+        }
+      }
+      return -1;
+    }
+
+    async function loadGlossary(file) {
+      const arrayBuffer = await file.arrayBuffer();
+      const data = new Uint8Array(arrayBuffer);
+      const workbook = XLSX.read(data, { type: 'array' });
+      
+      // 找到包含 source/target 列的工作表
+      let targetSheet = null;
+      for (const sheetName of workbook.SheetNames) {
+        const sheet = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+        const sourceCol = findColumn(sheet, SOURCE_ALIASES);
+        const targetCol = findColumn(sheet, TARGET_ALIASES);
+        if (sourceCol >= 0 && targetCol >= 0) {
+          targetSheet = { name: sheetName, data: sheet, sourceCol, targetCol };
+          break;
+        }
+      }
+      
+      if (!targetSheet) {
+        throw new Error('未找到 Source 和 Target 列，请检查术语表格式');
+      }
+      
+      const entries = [];
+      const { data: sheet, sourceCol, targetCol } = targetSheet;
+      
+      for (let rowIdx = 1; rowIdx < sheet.length; rowIdx++) {
+        const row = sheet[rowIdx];
+        if (!row || !row[sourceCol]) continue;
+        
+        const source = String(row[sourceCol]).trim();
+        const target = String(row[targetCol] || '').trim();
+        
+        if (!source) continue;
+        if (!target) continue;
+        
+        // 支持 source 用 / 或 \ 分隔
+        const parts = source.split(/[/\\]+/).map(p => p.trim()).filter(p => p);
+        
+        for (const part of parts) {
+          entries.push({
+            source: part,
+            target: target,
+            priority: 0,
+            matchType: 'phrase',
+            blockIfLonger: true
+          });
+        }
+      }
+      
+      return { entries, sheetName: targetSheet.name };
+    }
 
     function esc(s) {
-      return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+      return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
     function allHitIds() {
@@ -128,11 +172,11 @@
     }
 
     function renderTermList() {
-      termList.innerHTML = "";
+      termList.innerHTML = '';
       (scanData?.terms || []).forEach((t) => {
-        const b = document.createElement("button");
-        b.type = "button";
-        b.className = "term-item" + (t.source === activeSource ? " active" : "");
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'term-item' + (t.source === activeSource ? ' active' : '');
         b.innerHTML = esc(t.source) + ` <span class="cnt">${t.hits.length}</span>`;
         b.onclick = () => { activeSource = t.source; renderTermList(); renderHits(); };
         termList.appendChild(b);
@@ -141,14 +185,14 @@
 
     function renderHits() {
       const term = (scanData?.terms || []).find((t) => t.source === activeSource);
-      hitBody.innerHTML = "";
+      hitBody.innerHTML = '';
       if (!term) return;
       let allOn = true;
       term.hits.forEach((h) => {
         if (!selectedIds.has(h.id)) allOn = false;
-        const tr = document.createElement("tr");
-        const ck = document.createElement("input");
-        ck.type = "checkbox";
+        const tr = document.createElement('tr');
+        const ck = document.createElement('input');
+        ck.type = 'checkbox';
         ck.checked = selectedIds.has(h.id);
         ck.onchange = () => {
           if (ck.checked) selectedIds.add(h.id); else selectedIds.delete(h.id);
@@ -173,30 +217,99 @@
 
     btnScan.onclick = async () => {
       const g = glossary.files[0], z = subsReplace.files[0];
-      if (!g || !z) return alert("请上传清单和字幕 ZIP");
-      const fd = new FormData();
-      fd.append("glossary", g);
-      fd.append("subtitles", z);
-      fd.append("preview", preview.checked);
-      statusScan.className = "status";
-      statusScan.textContent = "扫描中…";
+      if (!g || !z) return alert('请上传清单和字幕 ZIP');
+      
+      statusScan.className = 'status';
+      statusScan.textContent = '扫描中…';
       btnScan.disabled = true;
+      
       try {
-        const r = await fetch("/api/scan-replace", { method: "POST", body: fd });
-        if (!r.ok) throw new Error(await r.text() || r.statusText);
-        scanData = await r.json();
+        // 加载术语表
+        const glossResult = await loadGlossary(g);
+        glossaryEntries = glossResult.entries;
+        
+        // 加载字幕文件
+        const arrayBuffer = await z.arrayBuffer();
+        const zip = await JSZip.loadAsync(arrayBuffer);
+        subtitleFiles = [];
+        
+        for (const [name, file] of Object.entries(zip.files)) {
+          if (file.dir || !name.toLowerCase().endsWith('.srt')) continue;
+          const content = await file.async('string');
+          subtitleFiles.push({ name, content });
+        }
+        
+        if (subtitleFiles.length === 0) {
+          throw new Error('ZIP 中未找到 SRT 文件');
+        }
+        
+        // 扫描命中
+        const terms = {};
+        let totalHits = 0;
+        
+        const limit = preview.checked ? 1 : subtitleFiles.length;
+        
+        for (let i = 0; i < limit; i++) {
+          const subFile = subtitleFiles[i];
+          const subs = parseSrt(subFile.content);
+          const outName = subFile.name.split('/').pop();
+          
+          for (let j = 0; j < subs.length; j++) {
+            const line = subs[j];
+            if (!line.text || !line.text.trim()) continue;
+            
+            const text = line.text.replace(/\n/g, ' ');
+            const { hits } = scanTextHits(text, glossaryEntries);
+            
+            const tc = formatTimecode(line.start);
+            
+            for (const h of hits) {
+              const src = h.source;
+              const bucket = terms[src] || { source: src, target: h.target, hits: [] };
+              
+              bucket.hits.push({
+                id: `${outName}|${j + 1}|${h.start}|${h.end}|${src}`,
+                file: outName,
+                line_no: j + 1,
+                timecode: tc,
+                line_text: text,
+                source: h.source,
+                target: h.target,
+                start: h.start,
+                end: h.end
+              });
+              
+              totalHits++;
+              terms[src] = bucket;
+            }
+          }
+        }
+        
+        const termList = Object.values(terms).sort((a, b) => {
+          if (b.hits.length !== a.hits.length) return b.hits.length - a.hits.length;
+          return b.source.length - a.source.length;
+        });
+        
+        scanData = {
+          sheet_name: glossResult.sheetName,
+          term_count: termList.length,
+          hit_count: totalHits,
+          terms: termList
+        };
+        
         selectedIds = new Set(allHitIds());
         activeSource = scanData.terms[0]?.source || null;
-        scanSummary.textContent =
-          `工作表: ${scanData.sheet_name} | ${scanData.term_count} 个词，${scanData.hit_count} 处命中`;
+        
+        scanSummary.textContent = `工作表: ${scanData.sheet_name} | ${scanData.term_count} 个词，${scanData.hit_count} 处命中`;
         scanLayout.hidden = !scanData.term_count;
         renderTermList();
         renderHits();
         chkGlobalAll.checked = true;
-        statusScan.className = "status ok";
-        statusScan.textContent = "扫描完成，请勾选后执行替换";
+        
+        statusScan.className = 'status ok';
+        statusScan.textContent = '扫描完成，请勾选后执行替换';
       } catch (e) {
-        statusScan.className = "status err";
+        statusScan.className = 'status err';
         statusScan.textContent = e.message;
       } finally {
         btnScan.disabled = false;
@@ -219,60 +332,95 @@
       renderHits();
     };
 
-    btnReplace.onclick = () => {
+    btnReplace.onclick = async () => {
       const g = glossary.files[0], z = subsReplace.files[0];
-      if (!g || !z) return alert("请上传清单和字幕 ZIP");
-      if (scanData && selectedIds.size === 0) return alert("请至少勾选一处替换");
-      const fd = new FormData();
-      fd.append("glossary", g);
-      fd.append("subtitles", z);
-      fd.append("preview", preview.checked);
-      fd.append("also_fix", alsoFix.checked);
-      fd.append("round_trip", "true");
-      if (scanData) fd.append("selected_hit_ids", JSON.stringify([...selectedIds]));
-      apiPost("/api/replace", fd, statusReplace, "replace_result.zip", btnReplace);
+      if (!g || !z) return alert('请上传清单和字幕 ZIP');
+      if (scanData && selectedIds.size === 0) return alert('请至少勾选一处替换');
+      
+      statusReplace.className = 'status';
+      statusReplace.textContent = '替换中…';
+      btnReplace.disabled = true;
+      
+      try {
+        const outZip = new JSZip();
+        const changes = [];
+        
+        const limit = preview.checked ? 1 : subtitleFiles.length;
+        
+        for (let i = 0; i < limit; i++) {
+          const subFile = subtitleFiles[i];
+          const subs = parseSrt(subFile.content);
+          const outName = subFile.name.split('/').pop();
+          
+          for (let j = 0; j < subs.length; j++) {
+            const line = subs[j];
+            if (!line.text) continue;
+            
+            const original = line.text;
+            const text = original.replace(/\n/g, ' ');
+            const { text: replaced, hits } = replaceText(text, glossaryEntries);
+            
+            if (replaced !== text) {
+              changes.push({
+                file: outName,
+                line_no: j + 1,
+                original: original,
+                replaced: replaced
+              });
+            }
+            
+            line.text = replaced;
+          }
+          
+          // SRT 规范化
+          if (alsoFix.checked) {
+            for (const line of subs) {
+              if (line.text) {
+                line.text = line.text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                const parts = line.text.split('\n').map(p => p.trim()).filter(p => p);
+                line.text = parts.join('\n');
+              }
+              if (line.end <= line.start) {
+                line.end = line.start + 2000;
+              }
+            }
+          }
+          
+          const outContent = generateSrt(subs);
+          outZip.file(`replaced/${outName}`, outContent);
+        }
+        
+        // 生成 changes.csv
+        if (changes.length > 0) {
+          let csv = '文件,句序,原文,替换后\n';
+          changes.forEach(c => {
+            csv += `"${c.file}","${c.line_no}","${c.original.replace(/"/g, '""')}","${c.replaced.replace(/"/g, '""')}"\n`;
+          });
+          outZip.file('changes.csv', csv);
+        }
+        
+        // 下载
+        const blob = await outZip.generateAsync({ type: 'blob' });
+        downloadBlob(blob, 'replace_result.zip');
+        
+        statusReplace.className = 'status ok';
+        statusReplace.textContent = '已完成，下载已开始';
+      } catch (e) {
+        statusReplace.className = 'status err';
+        statusReplace.textContent = e.message;
+      } finally {
+        btnReplace.disabled = false;
+      }
     };
 
-    const MAX_SHOW = 500;
-    function renderCompare(data) {
-      const s = data.summary, rows = data.rows || [];
-      compareSummary.textContent =
-        `已对比 ${s.files_compared} 个文件，${s.total_diffs} 处差异` +
-        (rows.length > MAX_SHOW ? `（下表前 ${MAX_SHOW} 条）` : "");
-      compareBody.innerHTML = "";
-      rows.slice(0, MAX_SHOW).forEach((r) => {
-        const tr = document.createElement("tr");
-        tr.innerHTML =
-          `<td>${esc(r.file)}</td><td>${r.line_no}</td><td>${esc(r.timecode)}</td>` +
-          `<td class="col-toolkit">${esc(r.toolkit_text)}</td><td class="col-manual">${esc(r.manual_text)}</td>`;
-        compareBody.appendChild(tr);
-      });
-      compareTableWrap.hidden = rows.length === 0;
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
     }
-    async function runCompare(download) {
-      const tk = zipToolkit.files[0], mn = zipManual.files[0];
-      if (!tk || !mn) return alert("请上传两个 ZIP");
-      const fd = new FormData();
-      fd.append("toolkit", tk);
-      fd.append("manual", mn);
-      const url = download ? "/api/compare-subtitles/download" : "/api/compare-subtitles";
-      const btn = download ? btnCompareDownload : btnCompare;
-      if (download) return apiPost(url, fd, statusCompare, "compare_result.zip", btn);
-      statusCompare.textContent = "对比中…";
-      btn.disabled = true;
-      try {
-        const r = await fetch(url, { method: "POST", body: fd });
-        if (!r.ok) throw new Error(await r.text() || r.statusText);
-        renderCompare(await r.json());
-        statusCompare.className = "status ok";
-        statusCompare.textContent = "对比完成";
-      } catch (e) {
-        statusCompare.className = "status err";
-        statusCompare.textContent = e.message;
-      } finally { btn.disabled = false; }
-    }
-    btnCompare.onclick = () => runCompare(false);
-    btnCompareDownload.onclick = () => runCompare(true);
   </script>
 </body>
 </html>
