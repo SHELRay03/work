@@ -1,0 +1,112 @@
+短剧字幕工具箱 - 公司 / 移动硬盘使用说明
+========================================
+
+项目路径: G:\subtitle-toolkit  （盘符以实际为准）
+
+【重要】浏览器提示「检查代理、防火墙、网络」时，通常是本地服务没启动，
+不是外网问题。start.bat 的黑窗口必须一直开着。
+
+访问地址: http://127.0.0.1:8000  （不要用 https）
+
+
+一、公司电脑第一次使用
+----------------------
+1. 安装 Python 3.10+（公司机已装可跳过）
+2. 文件夹放在 G: 盘
+3. 双击 setup.bat（自动找 Python，不依赖 PATH）
+4. 双击 start.bat，浏览器打开 http://127.0.0.1:8000
+
+
+二、你们公司电脑已确认的 Python 路径
+------------------------------------
+经现场排查，本机有效路径为（优先用这个）:
+
+  C:\Program Files\PyManager\python.exe
+
+不要用下面这个（只是微软商店占位，不是真 Python）:
+
+  C:\Users\EDY\AppData\Local\Microsoft\WindowsApps\python.exe
+
+项目里已自带 python_path.txt，内容应只有一行 PyManager 路径。
+若 setup 仍报 Python not found:
+  - 用记事本打开 G:\subtitle-toolkit\python_path.txt
+  - 只保留一行: C:\Program Files\PyManager\python.exe
+  - 保存后再双击 setup.bat
+
+验证命令（cmd 里复制）:
+
+  py -3 --version
+  "C:\Program Files\PyManager\python.exe" --version
+
+
+三、若 setup 黑窗口出现乱码命令名
+---------------------------------
+例如: 'YEDEXPANSION' 不是内部或外部命令
+原因: .bat 文件编码损坏（勿用记事本另存为 UTF-16）。
+处理: 用家里更新过的整包覆盖 G 盘，或只覆盖这些文件后重试:
+  find_python.bat  setup.bat  start.bat  scripts\doctor.bat
+
+
+四、从 F: 迁到 G:
+-----------------
+到公司后在 G:\subtitle-toolkit 重新双击 setup.bat，再 start.bat。
+不要只拷贝旧 .venv。
+
+
+五、一键诊断（给豆包 / 晚上发我）
+---------------------------------
+双击 scripts\doctor.bat
+打开 G:\subtitle-toolkit\doctor_report.txt，全文复制。
+
+
+六、给豆包用的模板（复制整段）
+------------------------------
+我在公司电脑 G:\subtitle-toolkit 运行字幕工具箱。
+setup.bat / start.bat 后浏览器打不开。请根据诊断报告逐步告诉我怎么做。
+
+【粘贴 doctor_report.txt 全文】
+---
+（这里粘贴）
+---
+
+请用中文回答:
+1) 该用哪个 python.exe（不要 WindowsApps）
+2) python_path.txt 该怎么写（只一行）
+3) pip 失败时的镜像命令
+4) 下一步双击哪个 bat、访问哪个网址
+
+
+七、cmd 常用命令（复制用）
+--------------------------
+cd /d G:\subtitle-toolkit
+
+.venv\Scripts\python.exe --version
+
+.venv\Scripts\python.exe run.py
+
+.venv\Scripts\python.exe -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+.venv\Scripts\python.exe scripts\patch_replace_page.py
+
+
+八、常见问题
+------------
+Q: setup 报 Python not found
+A: 检查 python_path.txt 只有 PyManager 那一行；运行 py -3 --version
+
+Q: pip 超时 / SSL
+A: 用第七节清华镜像命令；或回家联网再 setup
+
+Q: 术语替换页 Internal Server Error
+A: .venv\Scripts\python.exe scripts\patch_replace_page.py 后重启 start.bat
+
+Q: 页面无样式
+A: .venv\Scripts\python.exe scripts\write_style.py  然后 Ctrl+F5
+
+
+九、SOP
+-------
+Cliper 提取/抹除 -> 人工维护术语表 -> 本工具术语替换 -> Cliper 机翻
+-> 本工具 SRT 修复 -> 剪映校对
+
+本工具只做术语表替换 + SRT 格式清洗，称呼译法请在表里人工维护。

@@ -1,0 +1,279 @@
+# -*- coding: utf-8 -*-
+from pathlib import Path
+
+HTML = r"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>术语替换 · 字幕工具箱</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
+  <link rel="icon" href="/favicon.ico" type="image/svg+xml" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="bg-layer" aria-hidden="true"></div>
+  <header class="hud-top">
+    <a href="/" class="brand"><span class="brand-mark" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="1.5" rx=".5" fill="#fafffd"/><rect x="2" y="7.25" width="9" height="1.5" rx=".5" fill="#fafffd" opacity=".9"/><rect x="2" y="10.5" width="11" height="1.5" rx=".5" fill="#fafffd" opacity=".75"/></svg>
+      </span>字幕工具箱</a>
+    <nav class="hud-nav">
+      <a href="/">首页</a>
+      <a href="/replace" class="active">术语替换</a>
+      <a href="/fix">SRT 修复</a>
+      <a href="/audit">术语体检</a>
+    </nav>
+  </header>
+  <main class="hud-main">
+    <h1 class="page-title">术语替换</h1>
+    <p class="page-sub">本地化清单 → 扫描命中 → 勾选后批量替换</p>
+
+    <section class="panel">
+      <div class="panel-head"><span class="panel-dot"></span><h2>1. 上传与扫描</h2></div>
+      <p class="card-desc">
+        Source 列支持 <code>词A/词B</code> 或 <code>词A\词B</code> 拆成多条。ZIP 内任意子文件夹的 SRT 均可识别。
+      </p>
+      <div class="field">
+        <label>本地化清单 (.xlsx)</label>
+        <input type="file" id="glossary" accept=".xlsx,.xls" />
+      </div>
+      <div class="field">
+        <label>字幕文件夹 (.zip)</label>
+        <input type="file" id="subsReplace" accept=".zip" />
+      </div>
+      <div class="actions">
+        <button type="button" id="btnScan" class="btn-secondary">扫描替换位置</button>
+      </div>
+      <div class="status" id="statusScan"></div>
+      <p class="compare-summary" id="scanSummary"></p>
+
+      <div class="scan-layout" id="scanLayout" hidden>
+        <div class="term-list" id="termList"></div>
+        <div>
+          <div class="scan-toolbar">
+            <label><input type="checkbox" id="chkTermAll" checked /> 本词全选</label>
+            <label><input type="checkbox" id="chkGlobalAll" checked /> 全部全选</label>
+          </div>
+          <div class="diff-table-wrap">
+            <table class="diff-table">
+              <thead>
+                <tr>
+                  <th>选</th>
+                  <th>文件</th>
+                  <th>句序</th>
+                  <th>时间</th>
+                  <th>原文句</th>
+                </tr>
+              </thead>
+              <tbody id="hitBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><span class="panel-dot"></span><h2>2. 执行替换</h2></div>
+      <div class="opts">
+        <label><input type="checkbox" id="preview" /> 预览（仅第一集）</label>
+        <label><input type="checkbox" id="alsoFix" checked /> 替换后 SRT 规范化</label>
+      </div>
+      <div class="actions">
+        <button type="button" id="btnReplace">按勾选开始替换</button>
+        <a class="link" href="/api/sample-glossary">示例术语表</a>
+        <a class="link" href="/api/sample-subtitles">示例字幕</a>
+      </div>
+      <div class="status" id="statusReplace"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><span class="panel-dot"></span><h2>3. 与人工替换对比</h2></div>
+      <div class="field">
+        <label>网站替换 (.zip)</label>
+        <input type="file" id="zipToolkit" accept=".zip" />
+      </div>
+      <div class="field">
+        <label>VS Code 人工 (.zip)</label>
+        <input type="file" id="zipManual" accept=".zip" />
+      </div>
+      <div class="actions">
+        <button type="button" id="btnCompare" class="btn-secondary">对比差异</button>
+        <button type="button" id="btnCompareDownload" class="btn-secondary">下载对比报告</button>
+      </div>
+      <div class="status" id="statusCompare"></div>
+      <p class="compare-summary" id="compareSummary"></p>
+      <div class="diff-table-wrap" id="compareTableWrap" hidden>
+        <table class="diff-table">
+          <thead>
+            <tr><th>文件</th><th>句序</th><th>时间</th><th>网站</th><th>人工</th></tr>
+          </thead>
+          <tbody id="compareBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <script src="/static/common.js"></script>
+  <script>
+    let scanData = null;
+    let selectedIds = new Set();
+    let activeSource = null;
+
+    function esc(s) {
+      return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    }
+
+    function allHitIds() {
+      const ids = [];
+      (scanData?.terms || []).forEach((t) => t.hits.forEach((h) => ids.push(h.id)));
+      return ids;
+    }
+
+    function renderTermList() {
+      termList.innerHTML = "";
+      (scanData?.terms || []).forEach((t) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "term-item" + (t.source === activeSource ? " active" : "");
+        b.innerHTML = esc(t.source) + ` <span class="cnt">${t.hits.length}</span>`;
+        b.onclick = () => { activeSource = t.source; renderTermList(); renderHits(); };
+        termList.appendChild(b);
+      });
+    }
+
+    function renderHits() {
+      const term = (scanData?.terms || []).find((t) => t.source === activeSource);
+      hitBody.innerHTML = "";
+      if (!term) return;
+      let allOn = true;
+      term.hits.forEach((h) => {
+        if (!selectedIds.has(h.id)) allOn = false;
+        const tr = document.createElement("tr");
+        const ck = document.createElement("input");
+        ck.type = "checkbox";
+        ck.checked = selectedIds.has(h.id);
+        ck.onchange = () => {
+          if (ck.checked) selectedIds.add(h.id); else selectedIds.delete(h.id);
+          chkTermAll.checked = term.hits.every((x) => selectedIds.has(x.id));
+          chkGlobalAll.checked = allHitIds().every((id) => selectedIds.has(id));
+        };
+        tr.innerHTML =
+          `<td></td><td>${esc(h.file)}</td><td>${h.line_no}</td><td>${esc(h.timecode)}</td><td>${esc(h.line_text)}</td>`;
+        tr.cells[0].appendChild(ck);
+        hitBody.appendChild(tr);
+      });
+      chkTermAll.checked = allOn;
+    }
+
+    btnScan.onclick = async () => {
+      const g = glossary.files[0], z = subsReplace.files[0];
+      if (!g || !z) return alert("请上传清单和字幕 ZIP");
+      const fd = new FormData();
+      fd.append("glossary", g);
+      fd.append("subtitles", z);
+      fd.append("preview", preview.checked);
+      statusScan.className = "status";
+      statusScan.textContent = "扫描中…";
+      btnScan.disabled = true;
+      try {
+        const r = await fetch("/api/scan-replace", { method: "POST", body: fd });
+        if (!r.ok) throw new Error(await r.text() || r.statusText);
+        scanData = await r.json();
+        selectedIds = new Set(allHitIds());
+        activeSource = scanData.terms[0]?.source || null;
+        scanSummary.textContent =
+          `工作表: ${scanData.sheet_name} | ${scanData.term_count} 个词，${scanData.hit_count} 处命中`;
+        scanLayout.hidden = !scanData.term_count;
+        renderTermList();
+        renderHits();
+        chkGlobalAll.checked = true;
+        statusScan.className = "status ok";
+        statusScan.textContent = "扫描完成，请勾选后执行替换";
+      } catch (e) {
+        statusScan.className = "status err";
+        statusScan.textContent = e.message;
+      } finally {
+        btnScan.disabled = false;
+      }
+    };
+
+    chkTermAll.onchange = () => {
+      const term = (scanData?.terms || []).find((t) => t.source === activeSource);
+      if (!term) return;
+      term.hits.forEach((h) => {
+        if (chkTermAll.checked) selectedIds.add(h.id); else selectedIds.delete(h.id);
+      });
+      renderHits();
+      chkGlobalAll.checked = allHitIds().every((id) => selectedIds.has(id));
+    };
+
+    chkGlobalAll.onchange = () => {
+      if (chkGlobalAll.checked) allHitIds().forEach((id) => selectedIds.add(id));
+      else selectedIds.clear();
+      renderHits();
+    };
+
+    btnReplace.onclick = () => {
+      const g = glossary.files[0], z = subsReplace.files[0];
+      if (!g || !z) return alert("请上传清单和字幕 ZIP");
+      if (scanData && selectedIds.size === 0) return alert("请至少勾选一处替换");
+      const fd = new FormData();
+      fd.append("glossary", g);
+      fd.append("subtitles", z);
+      fd.append("preview", preview.checked);
+      fd.append("also_fix", alsoFix.checked);
+      fd.append("round_trip", "true");
+      if (scanData) fd.append("selected_hit_ids", JSON.stringify([...selectedIds]));
+      apiPost("/api/replace", fd, statusReplace, "replace_result.zip", btnReplace);
+    };
+
+    const MAX_SHOW = 500;
+    function renderCompare(data) {
+      const s = data.summary, rows = data.rows || [];
+      compareSummary.textContent =
+        `已对比 ${s.files_compared} 个文件，${s.total_diffs} 处差异` +
+        (rows.length > MAX_SHOW ? `（下表前 ${MAX_SHOW} 条）` : "");
+      compareBody.innerHTML = "";
+      rows.slice(0, MAX_SHOW).forEach((r) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML =
+          `<td>${esc(r.file)}</td><td>${r.line_no}</td><td>${esc(r.timecode)}</td>` +
+          `<td class="col-toolkit">${esc(r.toolkit_text)}</td><td class="col-manual">${esc(r.manual_text)}</td>`;
+        compareBody.appendChild(tr);
+      });
+      compareTableWrap.hidden = rows.length === 0;
+    }
+    async function runCompare(download) {
+      const tk = zipToolkit.files[0], mn = zipManual.files[0];
+      if (!tk || !mn) return alert("请上传两个 ZIP");
+      const fd = new FormData();
+      fd.append("toolkit", tk);
+      fd.append("manual", mn);
+      const url = download ? "/api/compare-subtitles/download" : "/api/compare-subtitles";
+      const btn = download ? btnCompareDownload : btnCompare;
+      if (download) return apiPost(url, fd, statusCompare, "compare_result.zip", btn);
+      statusCompare.textContent = "对比中…";
+      btn.disabled = true;
+      try {
+        const r = await fetch(url, { method: "POST", body: fd });
+        if (!r.ok) throw new Error(await r.text() || r.statusText);
+        renderCompare(await r.json());
+        statusCompare.className = "status ok";
+        statusCompare.textContent = "对比完成";
+      } catch (e) {
+        statusCompare.className = "status err";
+        statusCompare.textContent = e.message;
+      } finally { btn.disabled = false; }
+    }
+    btnCompare.onclick = () => runCompare(false);
+    btnCompareDownload.onclick = () => runCompare(true);
+  </script>
+</body>
+</html>
+"""
+
+Path(__file__).resolve().parent.parent.joinpath("frontend", "replace.html").write_text(
+    HTML, encoding="utf-8", newline="\n"
+)
+print("replace.html ok")

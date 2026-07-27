@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SRT 批量修复 · 字幕工具箱</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
+  <link rel="icon" href="/favicon.ico" type="image/svg+xml" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="bg-layer" aria-hidden="true"></div>
+  <header class="hud-top">
+    <a href="/" class="brand"><span class="brand-mark" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="1.5" rx=".5" fill="#fafffd"/><rect x="2" y="7.25" width="9" height="1.5" rx=".5" fill="#fafffd" opacity=".9"/><rect x="2" y="10.5" width="11" height="1.5" rx=".5" fill="#fafffd" opacity=".75"/></svg>
+      </span>字幕工具箱</a>
+    <nav class="hud-nav"><a href="/">首页</a><a href="/replace">术语替换</a><a href="/fix" class="active">SRT 修复</a><a href="/audit">术语体检</a></nav>
+  </header>
+  <main class="hud-main">
+    <h1 class="page-title">SRT 批量修复</h1>
+    <p class="page-sub">统一换行与时间轴，ASS 往返，便于导入剪映（不调整每行字数）</p>
+    <section class="panel">
+      <div class="panel-head"><span class="panel-dot"></span><h2>功能操作</h2></div>
+      <p class="card-desc">ZIP 内任意层级文件夹中的 .srt 都会被找到；输出为扁平文件名。</p>
+      <div class="field"><label>字幕 (.zip)</label><input type="file" id="subsFix" accept=".zip" /></div>
+      <div class="actions"><button type="button" id="btnFix">批量修复</button></div>
+      <div class="status" id="statusFix"></div>
+    </section>
+  </main>
+  <script src="/static/common.js"></script>
+  <script>
+    btnFix.onclick = () => {
+      const z = subsFix.files[0];
+      if (!z) return alert("请选择字幕 ZIP");
+      const fd = new FormData();
+      fd.append("subtitles", z);
+      fd.append("round_trip", "true");
+      apiPost("/api/fix-srt", fd, statusFix, "fix_result.zip", btnFix);
+    };
+  </script>
+</body>
+</html>

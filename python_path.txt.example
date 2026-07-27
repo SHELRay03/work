@@ -1,0 +1,5 @@
+# Copy to python_path.txt and keep ONE line (no #), full path to python.exe
+# Company PC example (PyManager):
+C:\Program Files\PyManager\python.exe
+# Do NOT use WindowsApps stub:
+# C:\Users\EDY\AppData\Local\Microsoft\WindowsApps\python.exe

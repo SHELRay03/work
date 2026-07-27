@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>术语表体检 · 字幕工具箱</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
+  <link rel="icon" href="/favicon.ico" type="image/svg+xml" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="bg-layer" aria-hidden="true"></div>
+  <header class="hud-top">
+    <a href="/" class="brand"><span class="brand-mark" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="1.5" rx=".5" fill="#fafffd"/><rect x="2" y="7.25" width="9" height="1.5" rx=".5" fill="#fafffd" opacity=".9"/><rect x="2" y="10.5" width="11" height="1.5" rx=".5" fill="#fafffd" opacity=".75"/></svg>
+      </span>字幕工具箱</a>
+    <nav class="hud-nav"><a href="/">首页</a><a href="/replace">术语替换</a><a href="/fix">SRT 修复</a><a href="/audit" class="active">术语体检</a></nav>
+  </header>
+  <main class="hud-main">
+    <h1 class="page-title">术语表体检</h1>
+    <p class="page-sub">检查表内风险，避免批量替换时互相干扰</p>
+    <section class="panel">
+      <div class="panel-head"><span class="panel-dot"></span><h2>检查什么</h2></div>
+      <p class="card-desc">
+        <strong>重复 Chinese</strong>：同一中文词条出现多行（例如两个「大小姐」），替换逻辑会重复处理。<br />
+        <strong>嵌套词条</strong>：短词被长词包含（如「大小姐」在「RAY大小姐」里），可能导致短词替不到或替错。<br />
+        体检不检查字幕内容，只检查表结构。上传本地化清单后下载报告即可。
+      </p>
+      <div class="field"><label>术语表 (.xlsx)</label><input type="file" id="glossaryAudit" accept=".xlsx,.xls" /></div>
+      <div class="actions"><button type="button" id="btnAudit">开始体检</button></div>
+      <div class="status" id="statusAudit"></div>
+    </section>
+  </main>
+  <script src="/static/common.js"></script>
+  <script>
+    btnAudit.onclick = () => {
+      const g = glossaryAudit.files[0];
+      if (!g) return alert("请选择术语表");
+      const fd = new FormData();
+      fd.append("glossary", g);
+      apiPost("/api/audit-glossary", fd, statusAudit, "audit_report.txt", btnAudit);
+    };
+  </script>
+</body>
+</html>
