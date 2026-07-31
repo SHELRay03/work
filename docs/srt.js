@@ -178,10 +178,26 @@ function findNonOverlapping(text, entries) {
   return { matches, conflicts };
 }
 
-function replaceText(text, entries) {
+function replaceText(text, entries, options = {}) {
   const { matches, conflicts } = findNonOverlapping(text, sortEntries(entries));
+  const allowedHitIds = options.allowedHitIds || null;
+  const fileName = options.fileName || '';
+  const lineIndex = options.lineIndex || 0;
   
   if (matches.length === 0) {
+    return { text, hits: [], conflicts };
+  }
+  
+  // 过滤出允许替换的命中
+  const filteredMatches = [];
+  for (const [start, end, entry] of matches) {
+    const hitId = `${fileName}|${lineIndex}|${start}|${end}|${entry.source}`;
+    if (allowedHitIds === null || allowedHitIds.has(hitId)) {
+      filteredMatches.push([start, end, entry]);
+    }
+  }
+  
+  if (filteredMatches.length === 0) {
     return { text, hits: [], conflicts };
   }
   
@@ -190,8 +206,8 @@ function replaceText(text, entries) {
   const parts = [];
   let cursor = 0;
   
-  for (let i = 0; i < matches.length; i++) {
-    const [start, end, entry] = matches[i];
+  for (let i = 0; i < filteredMatches.length; i++) {
+    const [start, end, entry] = filteredMatches[i];
     const before = text.substring(cursor, start);
     
     const needsSpaceBefore = before.length > 0 && 

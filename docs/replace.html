@@ -358,7 +358,11 @@
             
             const original = line.text;
             const text = original.replace(/\n/g, ' ');
-            const { text: replaced, hits } = replaceText(text, glossaryEntries);
+            const { text: replaced, hits } = replaceText(text, glossaryEntries, {
+              allowedHitIds: selectedIds,
+              fileName: outName,
+              lineIndex: j + 1
+            });
             
             if (replaced !== text) {
               changes.push({
