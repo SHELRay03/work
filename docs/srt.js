@@ -275,3 +275,129 @@ function scanTextHits(text, entries) {
   
   return { hits, conflicts };
 }
+
+/**
+ * 从 FileList 中提取 SRT 文件（支持 webkitdirectory 选择文件夹）
+ */
+function extractSrtFromFileList(fileList) {
+  const results = [];
+  for (const file of fileList) {
+    const name = file.name.toLowerCase();
+    if (name.endsWith('.srt')) {
+      const relPath = file.webkitRelativePath || file.name;
+      results.push({ name: relPath, file: file });
+    }
+  }
+  return results;
+}
+
+/**
+ * 递归读取拖入的文件夹
+ */
+function readDroppedFolder(entry, path = '') {
+  return new Promise((resolve, reject) => {
+    if (entry.isFile) {
+      entry.file((file) => {
+        const name = path + file.name;
+        resolve([{ name: name, file: file }]);
+      }, reject);
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      const allFiles = [];
+      const readAll = () => {
+        reader.readEntries(async (entries) => {
+          if (entries.length === 0) {
+            resolve(allFiles);
+            return;
+          }
+          const subPath = path + entry.name + '/';
+          const promises = entries.map(e => readDroppedFolder(e, subPath));
+          try {
+            const results = await Promise.all(promises);
+            for (const r of results) allFiles.push(...r);
+            readAll();
+          } catch (err) {
+            reject(err);
+          }
+        }, reject);
+      };
+      readAll();
+    } else {
+      resolve([]);
+    }
+  });
+}
+
+/**
+ * 从拖放事件中提取 SRT 文件
+ */
+async function extractSrtFromDropEvent(event) {
+  const items = event.dataTransfer?.items;
+  if (!items) return [];
+  
+  const results = [];
+  const filePromises = [];
+  
+  for (const item of items) {
+    const entry = item.webkitGetAsEntry?.();
+    if (!entry) {
+      const file = item.getAsFile();
+      if (file && file.name.toLowerCase().endsWith('.srt')) {
+        results.push({ name: file.name, file: file });
+      }
+      continue;
+    }
+    if (entry.isDirectory || entry.isFile) {
+      filePromises.push(readDroppedFolder(entry));
+    }
+  }
+  
+  const allFiles = await Promise.all(filePromises);
+  for (const files of allFiles) {
+    for (const f of files) {
+      if (f.name.toLowerCase().endsWith('.srt')) {
+        results.push(f);
+      }
+    }
+  }
+  
+  return results;
+}
+
+/**
+ * 使用 File System Access API 将文件写入文件夹
+ * 返回 { success, message }
+ */
+async function saveFilesToFolder(fileMap) {
+  // fileMap: [{ path, content }]
+  if (!window.showDirectoryPicker) {
+    return { success: false, message: '当前浏览器不支持文件夹导出，请使用 Chrome/Edge 或选择 ZIP 导出' };
+  }
+  
+  try {
+    const dirHandle = await window.showDirectoryPicker();
+    
+    for (const { path, content } of fileMap) {
+      const parts = path.split('/');
+      let current = dirHandle;
+      
+      // 创建子文件夹
+      for (let i = 0; i < parts.length - 1; i++) {
+        current = await current.getDirectoryHandle(parts[i], { create: true });
+      }
+      
+      const fileName = parts[parts.length - 1];
+      const fileHandle = await current.getFileHandle(fileName, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(content);
+      await writable.close();
+    }
+    
+    return { success: true, message: `已保存 ${fileMap.length} 个文件` };
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      return { success: false, message: '已取消保存' };
+    }
+    return { success: false, message: '保存失败：' + err.message };
+  }
+}

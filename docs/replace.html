@@ -38,8 +38,15 @@
         <input type="file" id="glossary" accept=".xlsx,.xls" />
       </div>
       <div class="field">
-        <label>字幕文件夹 (.zip)</label>
-        <input type="file" id="subsReplace" accept=".zip" />
+        <label>字幕（ZIP 压缩包 或 直接拖入文件夹）</label>
+        <div class="drop-zone" id="dropZoneReplace">
+          <input type="file" id="subsReplaceZip" accept=".zip" />
+          <input type="file" id="subsReplaceFolder" webkitdirectory multiple hidden />
+          <div class="drop-hint">
+            <span class="drop-icon">📁</span>
+            <span>点击选择 ZIP / 文件夹，或直接拖入文件夹</span>
+          </div>
+        </div>
       </div>
       <div class="actions">
         <button type="button" id="btnScan" class="btn-secondary">扫描替换位置</button>
@@ -77,6 +84,7 @@
       <div class="opts">
         <label><input type="checkbox" id="preview" /> 预览（仅第一集）</label>
         <label><input type="checkbox" id="alsoFix" checked /> 替换后 SRT 规范化</label>
+        <label><input type="checkbox" id="exportFolder" /> 导出为文件夹（需 Chrome/Edge）</label>
       </div>
       <div class="actions">
         <button type="button" id="btnReplace">按勾选开始替换</button>
@@ -84,16 +92,72 @@
       <div class="status" id="statusReplace"></div>
     </section>
   </main>
-  <script src="srt.js?v=2"></script>
+  <script src="srt.js?v=3"></script>
   <script>
     let scanData = null;
     let selectedIds = new Set();
     let activeSource = null;
     let glossaryEntries = [];
     let subtitleFiles = [];
+    let sourceType = null; // 'zip' | 'folder' | 'drop'
+    let droppedSrtFiles = []; // files from drag-drop
 
     const SOURCE_ALIASES = ['source', '中文', '原文', '源文', '词条', '术语', 'chinese', 'zh', '中文词条', '中文原文', '源'];
     const TARGET_ALIASES = ['target', '译文', '英文', '目标语', '翻译', 'english', 'en', '外语', '外文', '英文译名', '译名', '替换', '替换为', '替换内容', '目标文本', '目标'];
+
+    const subsReplaceZip = document.getElementById('subsReplaceZip');
+    const subsReplaceFolder = document.getElementById('subsReplaceFolder');
+    const dropZoneReplace = document.getElementById('dropZoneReplace');
+
+    dropZoneReplace.addEventListener('click', (e) => {
+      const rect = dropZoneReplace.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      if (y < rect.height / 2) {
+        subsReplaceZip.click();
+      } else {
+        subsReplaceFolder.click();
+      }
+    });
+
+    subsReplaceZip.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) sourceType = 'zip';
+    });
+    subsReplaceFolder.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) sourceType = 'folder';
+    });
+
+    ['dragover', 'dragenter'].forEach(evt => {
+      dropZoneReplace.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZoneReplace.classList.add('drag-over');
+      });
+    });
+    ['dragleave', 'drop'].forEach(evt => {
+      dropZoneReplace.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZoneReplace.classList.remove('drag-over');
+      });
+    });
+    dropZoneReplace.addEventListener('drop', async (e) => {
+      sourceType = 'drop';
+      try {
+        droppedSrtFiles = await extractSrtFromDropEvent(e);
+        if (droppedSrtFiles.length === 0) {
+          alert('拖入的内容中未找到 SRT 文件');
+          sourceType = null;
+          droppedSrtFiles = [];
+        } else {
+          statusScan.className = 'status ok';
+          statusScan.textContent = `已识别 ${droppedSrtFiles.length} 个 SRT 文件，请点击"扫描替换位置"`;
+        }
+      } catch (err) {
+        alert('读取拖入内容失败：' + err.message);
+        sourceType = null;
+        droppedSrtFiles = [];
+      }
+    });
 
     function normalizeHeader(name) {
       return String(name).trim().toLowerCase().replace(/\s+/g, '');
@@ -115,7 +179,6 @@
       const data = new Uint8Array(arrayBuffer);
       const workbook = XLSX.read(data, { type: 'array' });
       
-      // 找到包含 source/target 列的工作表
       let targetSheet = null;
       for (const sheetName of workbook.SheetNames) {
         const sheet = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
@@ -144,7 +207,6 @@
         if (!source) continue;
         if (!target) continue;
         
-        // 支持 source 用 / 或 \ 分隔
         const parts = source.split(/[/\\]+/).map(p => p.trim()).filter(p => p);
         
         for (const part of parts) {
@@ -197,10 +259,8 @@
         ck.onchange = () => {
           if (ck.checked) {
             selectedIds.add(h.id);
-            console.log('[checkbox] ADD:', h.id, 'total:', selectedIds.size);
           } else {
             selectedIds.delete(h.id);
-            console.log('[checkbox] REMOVE:', h.id, 'total:', selectedIds.size);
           }
           chkTermAll.checked = term.hits.every((x) => selectedIds.has(x.id));
           chkGlobalAll.checked = allHitIds().every((id) => selectedIds.has(id));
@@ -221,35 +281,54 @@
       return before + highlighted + after;
     }
 
+    async function loadSubtitleFiles() {
+      subtitleFiles = [];
+      
+      if (sourceType === 'zip') {
+        const z = subsReplaceZip.files[0];
+        if (!z) throw new Error('请选择 ZIP 文件');
+        const arrayBuffer = await z.arrayBuffer();
+        const zip = await JSZip.loadAsync(arrayBuffer);
+        for (const [name, file] of Object.entries(zip.files)) {
+          if (file.dir || !name.toLowerCase().endsWith('.srt')) continue;
+          const content = await file.async('string');
+          subtitleFiles.push({ name, content });
+        }
+      } else if (sourceType === 'folder') {
+        const items = extractSrtFromFileList(subsReplaceFolder.files);
+        for (const item of items) {
+          const content = await item.file.text();
+          subtitleFiles.push({ name: item.name, content });
+        }
+      } else if (sourceType === 'drop') {
+        for (const item of droppedSrtFiles) {
+          const content = await item.file.text();
+          subtitleFiles.push({ name: item.name, content });
+        }
+      } else {
+        throw new Error('请选择或拖入字幕文件');
+      }
+      
+      if (subtitleFiles.length === 0) {
+        throw new Error('未找到 SRT 文件');
+      }
+    }
+
     btnScan.onclick = async () => {
-      const g = glossary.files[0], z = subsReplace.files[0];
-      if (!g || !z) return alert('请上传清单和字幕 ZIP');
+      const g = glossary.files[0];
+      if (!g) return alert('请上传本地化清单');
+      if (!sourceType) return alert('请上传或拖入字幕（ZIP / 文件夹）');
       
       statusScan.className = 'status';
       statusScan.textContent = '扫描中…';
       btnScan.disabled = true;
       
       try {
-        // 加载术语表
         const glossResult = await loadGlossary(g);
         glossaryEntries = glossResult.entries;
         
-        // 加载字幕文件
-        const arrayBuffer = await z.arrayBuffer();
-        const zip = await JSZip.loadAsync(arrayBuffer);
-        subtitleFiles = [];
+        await loadSubtitleFiles();
         
-        for (const [name, file] of Object.entries(zip.files)) {
-          if (file.dir || !name.toLowerCase().endsWith('.srt')) continue;
-          const content = await file.async('string');
-          subtitleFiles.push({ name, content });
-        }
-        
-        if (subtitleFiles.length === 0) {
-          throw new Error('ZIP 中未找到 SRT 文件');
-        }
-        
-        // 扫描命中
         const terms = {};
         let totalHits = 0;
         
@@ -335,21 +414,17 @@
     chkGlobalAll.onchange = () => {
       if (chkGlobalAll.checked) {
         allHitIds().forEach((id) => selectedIds.add(id));
-        console.log('[globalAll] SELECT ALL, total:', selectedIds.size);
       } else {
         selectedIds.clear();
-        console.log('[globalAll] DESELECT ALL, total:', selectedIds.size);
       }
       renderHits();
     };
 
     btnReplace.onclick = async () => {
-      const g = glossary.files[0], z = subsReplace.files[0];
-      if (!g || !z) return alert('请上传清单和字幕 ZIP');
+      const g = glossary.files[0];
+      if (!g) return alert('请上传本地化清单');
+      if (!sourceType || subtitleFiles.length === 0) return alert('请先扫描字幕');
       if (scanData && selectedIds.size === 0) return alert('请至少勾选一处替换');
-      
-      console.log('[btnReplace] selectedIds size:', selectedIds.size);
-      console.log('[btnReplace] selectedIds:', [...selectedIds]);
       
       statusReplace.className = 'status';
       statusReplace.textContent = '替换中…';
@@ -358,6 +433,8 @@
       try {
         const outZip = new JSZip();
         const changes = [];
+        const outputFiles = []; // for folder export
+        const useFolderExport = exportFolder.checked;
         
         const limit = preview.checked ? 1 : subtitleFiles.length;
         
@@ -372,7 +449,7 @@
             
             const original = line.text;
             const text = original.replace(/\n/g, ' ');
-            const { text: replaced, hits } = replaceText(text, glossaryEntries, {
+            const { text: replaced } = replaceText(text, glossaryEntries, {
               allowedHitIds: selectedIds,
               fileName: outName,
               lineIndex: j + 1
@@ -390,7 +467,6 @@
             line.text = replaced;
           }
           
-          // SRT 规范化
           if (alsoFix.checked) {
             for (const line of subs) {
               if (line.text) {
@@ -405,24 +481,34 @@
           }
           
           const outContent = generateSrt(subs);
-          outZip.file(`replaced/${outName}`, outContent);
+          const relPath = 'replaced/' + outName;
+          outZip.file(relPath, outContent);
+          outputFiles.push({ path: relPath, content: outContent });
         }
         
-        // 生成 changes.csv
         if (changes.length > 0) {
           let csv = '文件,句序,原文,替换后\n';
           changes.forEach(c => {
             csv += `"${c.file}","${c.line_no}","${c.original.replace(/"/g, '""')}","${c.replaced.replace(/"/g, '""')}"\n`;
           });
           outZip.file('changes.csv', csv);
+          outputFiles.push({ path: 'changes.csv', content: csv });
         }
         
-        // 下载
-        const blob = await outZip.generateAsync({ type: 'blob' });
-        downloadBlob(blob, 'replace_result.zip');
-        
-        statusReplace.className = 'status ok';
-        statusReplace.textContent = '已完成，下载已开始';
+        if (useFolderExport) {
+          if (!window.showDirectoryPicker) {
+            throw new Error('当前浏览器不支持文件夹导出，请使用 Chrome/Edge，或取消勾选"导出为文件夹"');
+          }
+          const result = await saveFilesToFolder(outputFiles);
+          if (!result.success) throw new Error(result.message);
+          statusReplace.className = 'status ok';
+          statusReplace.textContent = result.message;
+        } else {
+          const blob = await outZip.generateAsync({ type: 'blob' });
+          downloadBlob(blob, 'replace_result.zip');
+          statusReplace.className = 'status ok';
+          statusReplace.textContent = '已完成，下载已开始';
+        }
       } catch (e) {
         statusReplace.className = 'status err';
         statusReplace.textContent = e.message;

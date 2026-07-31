@@ -24,39 +24,138 @@
     <p class="page-sub">统一换行与时间轴，便于导入剪映</p>
     <section class="panel">
       <div class="panel-head"><span class="panel-dot"></span><h2>功能操作</h2></div>
-      <p class="card-desc">ZIP 内任意层级文件夹中的 .srt 都会被找到；输出为扁平文件名。</p>
-      <div class="field"><label>字幕 (.zip)</label><input type="file" id="subsFix" accept=".zip" /></div>
+      <p class="card-desc">支持 ZIP 压缩包 或 直接拖入文件夹。ZIP 内任意层级文件夹中的 .srt 都会被识别。</p>
+      <div class="field">
+        <label>字幕（ZIP 压缩包 或 直接拖入文件夹）</label>
+        <div class="drop-zone" id="dropZoneFix">
+          <input type="file" id="subsFixZip" accept=".zip" />
+          <input type="file" id="subsFixFolder" webkitdirectory multiple hidden />
+          <div class="drop-hint">
+            <span class="drop-icon">📁</span>
+            <span>点击选择 ZIP / 文件夹，或直接拖入文件夹</span>
+          </div>
+        </div>
+      </div>
+      <div class="opts">
+        <label><input type="checkbox" id="exportFolder" /> 导出为文件夹（需 Chrome/Edge）</label>
+      </div>
       <div class="actions"><button type="button" id="btnFix">批量修复</button></div>
       <div class="status" id="statusFix"></div>
     </section>
   </main>
-  <script src="srt.js"></script>
+  <script src="srt.js?v=3"></script>
   <script>
     const btnFix = document.getElementById('btnFix');
     const statusFix = document.getElementById('statusFix');
-    const subsFix = document.getElementById('subsFix');
+    const subsFixZip = document.getElementById('subsFixZip');
+    const subsFixFolder = document.getElementById('subsFixFolder');
+    const dropZoneFix = document.getElementById('dropZoneFix');
+    const exportFolder = document.getElementById('exportFolder');
+
+    let sourceType = null; // 'zip' | 'folder' | 'drop'
+    let droppedSrtFiles = [];
+
+    dropZoneFix.addEventListener('click', (e) => {
+      const rect = dropZoneFix.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      if (y < rect.height / 2) {
+        subsFixZip.click();
+      } else {
+        subsFixFolder.click();
+      }
+    });
+
+    subsFixZip.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) sourceType = 'zip';
+    });
+    subsFixFolder.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) sourceType = 'folder';
+    });
+
+    ['dragover', 'dragenter'].forEach(evt => {
+      dropZoneFix.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZoneFix.classList.add('drag-over');
+      });
+    });
+    ['dragleave', 'drop'].forEach(evt => {
+      dropZoneFix.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZoneFix.classList.remove('drag-over');
+      });
+    });
+    dropZoneFix.addEventListener('drop', async (e) => {
+      sourceType = 'drop';
+      try {
+        droppedSrtFiles = await extractSrtFromDropEvent(e);
+        if (droppedSrtFiles.length === 0) {
+          alert('拖入的内容中未找到 SRT 文件');
+          sourceType = null;
+          droppedSrtFiles = [];
+        } else {
+          statusFix.className = 'status ok';
+          statusFix.textContent = `已识别 ${droppedSrtFiles.length} 个 SRT 文件，点击"批量修复"开始`;
+        }
+      } catch (err) {
+        alert('读取拖入内容失败：' + err.message);
+        sourceType = null;
+        droppedSrtFiles = [];
+      }
+    });
+
+    async function loadFixSubtitleFiles() {
+      const results = [];
+      
+      if (sourceType === 'zip') {
+        const z = subsFixZip.files[0];
+        if (!z) throw new Error('请选择 ZIP 文件');
+        const arrayBuffer = await z.arrayBuffer();
+        const zip = await JSZip.loadAsync(arrayBuffer);
+        for (const [name, file] of Object.entries(zip.files)) {
+          if (file.dir || !name.toLowerCase().endsWith('.srt')) continue;
+          const content = await file.async('string');
+          results.push({ name, content });
+        }
+      } else if (sourceType === 'folder') {
+        const items = extractSrtFromFileList(subsFixFolder.files);
+        for (const item of items) {
+          const content = await item.file.text();
+          results.push({ name: item.name, content });
+        }
+      } else if (sourceType === 'drop') {
+        for (const item of droppedSrtFiles) {
+          const content = await item.file.text();
+          results.push({ name: item.name, content });
+        }
+      } else {
+        throw new Error('请选择或拖入字幕文件');
+      }
+      
+      if (results.length === 0) {
+        throw new Error('未找到 SRT 文件');
+      }
+      return results;
+    }
 
     btnFix.onclick = async () => {
-      const z = subsFix.files[0];
-      if (!z) return alert('请选择字幕 ZIP');
+      if (!sourceType) return alert('请上传或拖入字幕（ZIP / 文件夹）');
       
       statusFix.className = 'status';
       statusFix.textContent = '处理中…';
       btnFix.disabled = true;
       
       try {
-        const arrayBuffer = await z.arrayBuffer();
-        const zip = await JSZip.loadAsync(arrayBuffer);
-        
+        const subtitleFiles = await loadFixSubtitleFiles();
         const outZip = new JSZip();
         let processedCount = 0;
         const reports = [];
+        const outputFiles = [];
+        const useFolderExport = exportFolder.checked;
         
-        for (const [name, file] of Object.entries(zip.files)) {
-          if (file.dir || !name.toLowerCase().endsWith('.srt')) continue;
-          
-          const content = await file.async('string');
-          const subs = parseSrt(content);
+        for (const subFile of subtitleFiles) {
+          const subs = parseSrt(subFile.content);
           
           // 规范化
           for (const line of subs) {
@@ -71,7 +170,7 @@
           }
           
           // 检查
-          const report = { fileName: name, eventCount: subs.length, warnings: [] };
+          const report = { fileName: subFile.name, eventCount: subs.length, warnings: [] };
           for (let i = 0; i < subs.length; i++) {
             if (!subs[i].text || !subs[i].text.trim()) {
               report.warnings.push(`事件 ${i + 1}: 空文本`);
@@ -87,8 +186,9 @@
           reports.push(report);
           
           const outContent = generateSrt(subs);
-          const outName = name.split('/').pop();
+          const outName = subFile.name.split('/').pop();
           outZip.file(outName, outContent);
+          outputFiles.push({ path: 'fixed/' + outName, content: outContent });
           processedCount++;
         }
         
@@ -103,13 +203,22 @@
           reportTxt += '\n';
         });
         outZip.file('fix_report.txt', reportTxt);
+        outputFiles.push({ path: 'fix_report.txt', content: reportTxt });
         
-        // 下载
-        const blob = await outZip.generateAsync({ type: 'blob' });
-        downloadBlob(blob, 'fix_result.zip');
-        
-        statusFix.className = 'status ok';
-        statusFix.textContent = `已完成，处理 ${processedCount} 个文件`;
+        if (useFolderExport) {
+          if (!window.showDirectoryPicker) {
+            throw new Error('当前浏览器不支持文件夹导出，请使用 Chrome/Edge，或取消勾选"导出为文件夹"');
+          }
+          const result = await saveFilesToFolder(outputFiles);
+          if (!result.success) throw new Error(result.message);
+          statusFix.className = 'status ok';
+          statusFix.textContent = result.message;
+        } else {
+          const blob = await outZip.generateAsync({ type: 'blob' });
+          downloadBlob(blob, 'fix_result.zip');
+          statusFix.className = 'status ok';
+          statusFix.textContent = `已完成，处理 ${processedCount} 个文件`;
+        }
       } catch (e) {
         statusFix.className = 'status err';
         statusFix.textContent = e.message;
