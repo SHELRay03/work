@@ -184,6 +184,10 @@ function replaceText(text, entries, options = {}) {
   const fileName = options.fileName || '';
   const lineIndex = options.lineIndex || 0;
   
+  console.log('[replaceText]', 'fileName:', fileName, 'lineIndex:', lineIndex);
+  console.log('[replaceText]', 'matches found:', matches.length);
+  console.log('[replaceText]', 'allowedHitIds size:', allowedHitIds ? allowedHitIds.size : 'null (all allowed)');
+  
   if (matches.length === 0) {
     return { text, hits: [], conflicts };
   }
@@ -192,10 +196,14 @@ function replaceText(text, entries, options = {}) {
   const filteredMatches = [];
   for (const [start, end, entry] of matches) {
     const hitId = `${fileName}|${lineIndex}|${start}|${end}|${entry.source}`;
-    if (allowedHitIds === null || allowedHitIds.has(hitId)) {
+    const isAllowed = allowedHitIds === null || allowedHitIds.has(hitId);
+    console.log('[replaceText]', 'hitId:', hitId, 'allowed:', isAllowed);
+    if (isAllowed) {
       filteredMatches.push([start, end, entry]);
     }
   }
+  
+  console.log('[replaceText]', 'filteredMatches:', filteredMatches.length, 'of', matches.length);
   
   if (filteredMatches.length === 0) {
     return { text, hits: [], conflicts };

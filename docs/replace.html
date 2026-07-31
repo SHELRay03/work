@@ -84,7 +84,7 @@
       <div class="status" id="statusReplace"></div>
     </section>
   </main>
-  <script src="srt.js"></script>
+  <script src="srt.js?v=2"></script>
   <script>
     let scanData = null;
     let selectedIds = new Set();
@@ -195,7 +195,13 @@
         ck.type = 'checkbox';
         ck.checked = selectedIds.has(h.id);
         ck.onchange = () => {
-          if (ck.checked) selectedIds.add(h.id); else selectedIds.delete(h.id);
+          if (ck.checked) {
+            selectedIds.add(h.id);
+            console.log('[checkbox] ADD:', h.id, 'total:', selectedIds.size);
+          } else {
+            selectedIds.delete(h.id);
+            console.log('[checkbox] REMOVE:', h.id, 'total:', selectedIds.size);
+          }
           chkTermAll.checked = term.hits.every((x) => selectedIds.has(x.id));
           chkGlobalAll.checked = allHitIds().every((id) => selectedIds.has(id));
         };
@@ -327,8 +333,13 @@
     };
 
     chkGlobalAll.onchange = () => {
-      if (chkGlobalAll.checked) allHitIds().forEach((id) => selectedIds.add(id));
-      else selectedIds.clear();
+      if (chkGlobalAll.checked) {
+        allHitIds().forEach((id) => selectedIds.add(id));
+        console.log('[globalAll] SELECT ALL, total:', selectedIds.size);
+      } else {
+        selectedIds.clear();
+        console.log('[globalAll] DESELECT ALL, total:', selectedIds.size);
+      }
       renderHits();
     };
 
@@ -336,6 +347,9 @@
       const g = glossary.files[0], z = subsReplace.files[0];
       if (!g || !z) return alert('请上传清单和字幕 ZIP');
       if (scanData && selectedIds.size === 0) return alert('请至少勾选一处替换');
+      
+      console.log('[btnReplace] selectedIds size:', selectedIds.size);
+      console.log('[btnReplace] selectedIds:', [...selectedIds]);
       
       statusReplace.className = 'status';
       statusReplace.textContent = '替换中…';
