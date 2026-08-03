@@ -589,3 +589,105 @@ button.btn-secondary:hover:not(:disabled) {
   display: block;
   margin-bottom: 0.25rem;
 }
+
+/* Tab 选项卡 */
+.result-tabs {
+  display: flex;
+  gap: 0;
+  margin: 0.75rem 0 0.5rem;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.tab-btn {
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  padding: 0.55rem 1.2rem;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  cursor: pointer;
+  color: var(--text-muted);
+  background: transparent;
+  box-shadow: none;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.tab-btn:hover {
+  color: var(--mint-deep);
+  background: rgba(94, 201, 160, 0.08);
+  box-shadow: none;
+  transform: none;
+}
+
+.tab-btn.active {
+  color: var(--mint-deep);
+  border-bottom-color: var(--mint-deep);
+  background: rgba(94, 201, 160, 0.12);
+  box-shadow: none;
+}
+
+.tab-content {
+  padding-top: 0.5rem;
+}
+
+.tab-content[hidden] {
+  display: none;
+}
+
+/* 术语表格 */
+.diff-table .target-input {
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.8);
+  font-family: inherit;
+  font-size: 0.84rem;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.diff-table .target-input:focus {
+  outline: none;
+  border-color: var(--mint);
+  box-shadow: 0 0 0 2px var(--mint-glow);
+}
+
+/* 变体标签 */
+.variant-tag {
+  display: inline-block;
+  padding: 2px 10px;
+  background: linear-gradient(135deg, rgba(126, 221, 184, 0.35), rgba(47, 143, 110, 0.2));
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  font-size: 0.82rem;
+  color: var(--mint-deep);
+  font-weight: 500;
+}
+
+/* 提示文字 */
+.hint {
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.6rem 0.85rem;
+  background: rgba(94, 201, 160, 0.1);
+  border-left: 3px solid var(--mint);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 0.84rem;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+
+.card-desc {
+  margin: 0.5rem 0 1rem;
+  padding: 0.65rem 0.85rem;
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 0.84rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.card-desc b {
+  color: var(--mint-deep);
+}

@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>术语自动识别 · 字幕工具箱</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body>
+  <div class="bg-layer" aria-hidden="true"></div>
+  <header class="hud-top">
+    <a href="index.html" class="brand"><span class="brand-mark" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="1.5" rx=".5" fill="#fafffd"/><rect x="2" y="7.25" width="9" height="1.5" rx=".5" fill="#fafffd" opacity=".9"/><rect x="2" y="10.5" width="11" height="1.5" rx=".5" fill="#fafffd" opacity=".75"/></svg>
+      </span>字幕工具箱</a>
+    <nav class="hud-nav">
+      <a href="index.html">首页</a>
+      <a href="replace.html">术语替换</a>
+      <a href="identify.html" class="active">术语识别</a>
+      <a href="fix.html">SRT 修复</a>
+    </nav>
+  </header>
+  <main class="hud-main">
+    <h1 class="page-title">术语自动识别</h1>
+    <p class="page-sub">上传中文字幕文件夹，自动识别人物指代变体与需人工翻译的专有词</p>
+
+    <section class="panel">
+      <div class="panel-head"><span class="panel-dot"></span><h2>1. 上传字幕</h2></div>
+      <p class="card-desc">
+        拖入整个文件夹（包含多集SRT），或选择单个ZIP压缩包。系统将自动扫描高频短语，识别 <b>人物指代变体</b>（如"云知意"→"知意"）和 <b>专有名词</b>（需人工翻译的古代用词、官职名等）。
+      </p>
+      <div class="field">
+        <label>字幕（ZIP 压缩包 或 直接拖入文件夹）</label>
+        <div class="drop-zone" id="dropZoneIdentify">
+          <input type="file" id="subsIdentifyZip" accept=".zip" />
+          <input type="file" id="subsIdentifyFolder" webkitdirectory multiple hidden />
+          <div class="drop-hint">
+            <span class="drop-icon">📁</span>
+            <span>点击选择 ZIP / 文件夹，或直接拖入文件夹</span>
+          </div>
+        </div>
+      </div>
+      <div class="opts">
+        <label><input type="number" id="minFreq" min="1" max="100" value="2" style="width:5rem" /> 最小出现频率</label>
+        <label><input type="number" id="minLen" min="2" max="4" value="2" style="width:5rem" /> 最小词长</label>
+        <label><input type="number" id="maxLen" min="2" max="6" value="4" style="width:5rem" /> 最大词长</label>
+        <label><input type="number" id="maxItems" min="10" max="500" value="100" style="width:5rem" /> 最多显示</label>
+      </div>
+      <div class="actions">
+        <button type="button" id="btnIdentify">开始识别</button>
+      </div>
+      <div class="status" id="statusIdentify"></div>
+    </section>
+
+    <section class="panel" id="resultPanel" hidden>
+      <div class="panel-head"><span class="panel-dot"></span><h2>2. 识别结果</h2></div>
+      <p class="compare-summary" id="resultSummary"></p>
+      
+      <div class="result-tabs">
+        <button type="button" class="tab-btn active" data-tab="variants">人物指代变体</button>
+        <button type="button" class="tab-btn" data-tab="proper">专有名词</button>
+      </div>
+
+      <div id="variantsTab" class="tab-content">
+        <p class="hint">以下是系统识别出的 <b>同一人物的不同称呼/简称</b>。长词作为主术语（Source），短词是其变体。建议为同一个人物填写统一的 Target（英文名或保留原名）。</p>
+        <div class="diff-table-wrap">
+          <table class="diff-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Source（主术语）</th>
+                <th>Target</th>
+                <th>变体</th>
+                <th>频率</th>
+                <th>跨集数</th>
+              </tr>
+            </thead>
+            <tbody id="variantsBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="properTab" class="tab-content" hidden>
+        <p class="hint">以下是跨多集高频出现、不属于常用词的 <b>专有名词/特殊词汇</b>（如古代用词、官职名、地名等）。建议人工翻译后填入 Target 列。</p>
+        <div class="diff-table-wrap">
+          <table class="diff-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Source（术语）</th>
+                <th>Target</th>
+                <th>频率</th>
+                <th>跨集数</th>
+              </tr>
+            </thead>
+            <tbody id="properBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="actions" style="margin-top:1rem">
+        <button type="button" id="btnExport">导出为 Excel 术语表</button>
+        <button type="button" id="btnExportAll" class="btn-secondary">导出全部候选</button>
+      </div>
+    </section>
+  </main>
+  <script src="srt.js?v=4"></script>
+  <script>
+    let sourceType = null;
+    let subtitleFiles = [];
+    let droppedSrtFiles = [];
+    let candidates = null;
+    let maxItemsLimit = 100;
+
+    const subsIdentifyZip = document.getElementById('subsIdentifyZip');
+    const subsIdentifyFolder = document.getElementById('subsIdentifyFolder');
+    const dropZoneIdentify = document.getElementById('dropZoneIdentify');
+    const statusIdentify = document.getElementById('statusIdentify');
+
+    // 文件选择交互
+    dropZoneIdentify.addEventListener('click', (e) => {
+      const rect = dropZoneIdentify.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      if (y < rect.height / 2) {
+        subsIdentifyZip.click();
+      } else {
+        subsIdentifyFolder.click();
+      }
+    });
+
+    subsIdentifyZip.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) sourceType = 'zip';
+    });
+    subsIdentifyFolder.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) sourceType = 'folder';
+    });
+
+    // 拖放支持
+    ['dragover', 'dragenter'].forEach(evt => {
+      dropZoneIdentify.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZoneIdentify.classList.add('drag-over');
+      });
+    });
+    ['dragleave', 'drop'].forEach(evt => {
+      dropZoneIdentify.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZoneIdentify.classList.remove('drag-over');
+      });
+    });
+    dropZoneIdentify.addEventListener('drop', async (e) => {
+      sourceType = 'drop';
+      try {
+        droppedSrtFiles = await extractSrtFromDropEvent(e);
+        if (droppedSrtFiles.length === 0) {
+          alert('拖入的内容中未找到 SRT 文件');
+          sourceType = null;
+          droppedSrtFiles = [];
+        } else {
+          statusIdentify.className = 'status ok';
+          statusIdentify.textContent = `已识别 ${droppedSrtFiles.length} 个 SRT 文件，点击"开始识别"`;
+        }
+      } catch (err) {
+        alert('读取拖入内容失败：' + err.message);
+        sourceType = null;
+        droppedSrtFiles = [];
+      }
+    });
+
+    // 加载字幕文件
+    async function loadSubtitleFiles() {
+      subtitleFiles = [];
+      
+      if (sourceType === 'zip') {
+        const z = subsIdentifyZip.files[0];
+        if (!z) throw new Error('请选择 ZIP 文件');
+        const arrayBuffer = await z.arrayBuffer();
+        const zip = await JSZip.loadAsync(arrayBuffer);
+        for (const [name, file] of Object.entries(zip.files)) {
+          if (file.dir || !name.toLowerCase().endsWith('.srt')) continue;
+          const content = await file.async('string');
+          subtitleFiles.push({ name, content });
+        }
+      } else if (sourceType === 'folder') {
+        const items = extractSrtFromFileList(subsIdentifyFolder.files);
+        for (const item of items) {
+          const content = await item.file.text();
+          subtitleFiles.push({ name: item.name, content });
+        }
+      } else if (sourceType === 'drop') {
+        for (const item of droppedSrtFiles) {
+          const content = await item.file.text();
+          subtitleFiles.push({ name: item.name, content });
+        }
+      } else {
+        throw new Error('请选择或拖入字幕文件');
+      }
+      
+      if (subtitleFiles.length === 0) {
+        throw new Error('未找到 SRT 文件');
+      }
+    }
+
+    // 识别按钮
+    document.getElementById('btnIdentify').onclick = async () => {
+      if (!sourceType) return alert('请上传或拖入字幕（ZIP / 文件夹）');
+      
+      statusIdentify.className = 'status';
+      statusIdentify.textContent = '解析字幕中…';
+      document.getElementById('btnIdentify').disabled = true;
+      
+      try {
+        await loadSubtitleFiles();
+        
+        statusIdentify.textContent = `分析 ${subtitleFiles.length} 个文件中的高频短语…`;
+        
+        // 使用自定义参数构建候选
+        const minFreq = parseInt(document.getElementById('minFreq').value) || 2;
+        const minLen = parseInt(document.getElementById('minLen').value) || 2;
+        const maxLen = parseInt(document.getElementById('maxLen').value) || 4;
+        maxItemsLimit = parseInt(document.getElementById('maxItems').value) || 100;
+        
+        // 解析所有字幕提取文本
+        const texts = [];
+        for (const file of subtitleFiles) {
+          const subs = parseSrt(file.content);
+          for (const sub of subs) {
+            if (sub.text && sub.text.trim()) {
+              texts.push({ text: sub.text.replace(/\n/g, ''), file: file.name });
+            }
+          }
+        }
+        
+        statusIdentify.textContent = '提取高频短语中…';
+        
+        // 提取n-gram
+        const phraseFreq = extractNgrams(texts, minLen, maxLen);
+        
+        // 调整最小频率
+        const filteredFreq = new Map();
+        for (const [phrase, info] of phraseFreq) {
+          if (info.count >= minFreq) {
+            filteredFreq.set(phrase, info);
+          }
+        }
+        
+        statusIdentify.textContent = '识别人物指代变体…';
+        
+        // 人物变体
+        const variants = detectPersonVariants(filteredFreq);
+        
+        const variantSet = new Set();
+        for (const v of variants) {
+          variantSet.add(v.full);
+          variantSet.add(v.short);
+        }
+        
+        statusIdentify.textContent = '识别专有名词…';
+        
+        // 专有名词
+        const properNouns = detectProperNouns(filteredFreq, variantSet);
+        
+        // 限制数量
+        const limitedVariants = variants.slice(0, maxItemsLimit);
+        const limitedProper = properNouns.slice(0, maxItemsLimit);
+        
+        // 合并
+        const allTerms = [
+          ...limitedVariants.map(v => ({
+            source: v.full,
+            target: '',
+            category: '人物指代',
+            frequency: v.fullCount,
+            fileCount: v.files.size,
+            note: `包含变体：${v.short}（${v.shortCount}次）`
+          })),
+          ...limitedProper.map(n => ({
+            source: n.phrase,
+            target: '',
+            category: '专有名词',
+            frequency: n.count,
+            fileCount: n.files.size,
+            note: ''
+          }))
+        ];
+        
+        candidates = { variants: limitedVariants, properNouns: limitedProper, allTerms };
+        
+        // 渲染结果
+        renderVariants(limitedVariants);
+        renderProperNouns(limitedProper);
+        
+        const resultPanel = document.getElementById('resultPanel');
+        resultPanel.hidden = false;
+        document.getElementById('resultSummary').textContent = 
+          `识别完成：${variants.length} 个人物指代变体，${properNouns.length} 个专有名词。当前显示 ${limitedVariants.length + limitedProper.length} 项。`;
+        
+        statusIdentify.className = 'status ok';
+        statusIdentify.textContent = `识别完成！共发现 ${variants.length + properNouns.length} 个候选术语`;
+        
+      } catch (e) {
+        statusIdentify.className = 'status err';
+        statusIdentify.textContent = e.message;
+      } finally {
+        document.getElementById('btnIdentify').disabled = false;
+      }
+    };
+
+    // 渲染人物变体表格
+    function renderVariants(variants) {
+      const body = document.getElementById('variantsBody');
+      body.innerHTML = '';
+      
+      if (variants.length === 0) {
+        body.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#999;padding:1rem">未识别到人物指代变体</td></tr>';
+        return;
+      }
+      
+      variants.forEach((v, i) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${i + 1}</td>
+          <td><strong style="color:var(--mint-deep)">${v.full}</strong></td>
+          <td><input type="text" class="target-input" data-idx="${i}" data-type="variant" value="" placeholder="填写Target..."/></td>
+          <td><span class="variant-tag">${v.short}</span></td>
+          <td>${v.fullCount}</td>
+          <td>${v.files.size}</td>
+        `;
+        body.appendChild(tr);
+      });
+    }
+
+    // 渲染专有名词表格
+    function renderProperNouns(nouns) {
+      const body = document.getElementById('properBody');
+      body.innerHTML = '';
+      
+      if (nouns.length === 0) {
+        body.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#999;padding:1rem">未识别到专有名词</td></tr>';
+        return;
+      }
+      
+      nouns.forEach((n, i) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${i + 1}</td>
+          <td><strong style="color:var(--mint-deep)">${n.phrase}</strong></td>
+          <td><input type="text" class="target-input" data-idx="${i}" data-type="proper" value="" placeholder="填写Target..."/></td>
+          <td>${n.count}</td>
+          <td>${n.files.size}</td>
+        `;
+        body.appendChild(tr);
+      });
+    }
+
+    // Tab切换
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tab = btn.dataset.tab;
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        document.querySelectorAll('.tab-content').forEach(c => c.hidden = true);
+        document.getElementById(tab + 'Tab').hidden = false;
+      });
+    });
+
+    // 收集用户填写的Target
+    function collectTargets() {
+      const inputs = document.querySelectorAll('.target-input');
+      const targets = {};
+      inputs.forEach(input => {
+        const idx = input.dataset.idx;
+        const type = input.dataset.type;
+        targets[`${type}_${idx}`] = input.value.trim();
+      });
+      return targets;
+    }
+
+    // 导出Excel（带用户填写的Target）
+    document.getElementById('btnExport').onclick = () => {
+      if (!candidates) return alert('请先识别术语');
+      
+      const targets = collectTargets();
+      
+      const terms = [];
+      
+      // 人物变体
+      candidates.variants.forEach((v, i) => {
+        terms.push({
+          source: v.full,
+          target: targets[`variant_${i}`] || '',
+          category: '人物指代',
+          frequency: v.fullCount,
+          fileCount: v.files.size,
+          note: `包含变体：${v.short}（${v.shortCount}次）`
+        });
+      });
+      
+      // 专有名词
+      candidates.properNouns.forEach((n, i) => {
+        terms.push({
+          source: n.phrase,
+          target: targets[`proper_${i}`] || '',
+          category: '专有名词',
+          frequency: n.count,
+          fileCount: n.files.size,
+          note: ''
+        });
+      });
+      
+      // 过滤出有Target的
+      const filtered = terms.filter(t => t.target);
+      if (filtered.length === 0) {
+        if (!confirm('您还没有填写任何 Target，将导出空的 Source 列表。是否继续？')) return;
+      }
+      
+      exportTermsToExcel(terms, 'candidate_terms.xlsx');
+      statusIdentify.className = 'status ok';
+      statusIdentify.textContent = `已导出 ${terms.length} 条术语`;
+    };
+
+    // 导出全部候选（无过滤）
+    document.getElementById('btnExportAll').onclick = () => {
+      if (!candidates) return alert('请先识别术语');
+      
+      const targets = collectTargets();
+      
+      const terms = [];
+      
+      candidates.variants.forEach((v, i) => {
+        terms.push({
+          source: v.full,
+          target: targets[`variant_${i}`] || '',
+          category: '人物指代',
+          frequency: v.fullCount,
+          fileCount: v.files.size,
+          note: `包含变体：${v.short}（${v.shortCount}次）`
+        });
+      });
+      
+      candidates.properNouns.forEach((n, i) => {
+        terms.push({
+          source: n.phrase,
+          target: targets[`proper_${i}`] || '',
+          category: '专有名词',
+          frequency: n.count,
+          fileCount: n.files.size,
+          note: ''
+        });
+      });
+      
+      exportTermsToExcel(terms, 'candidate_terms.xlsx');
+      statusIdentify.className = 'status ok';
+      statusIdentify.textContent = `已导出全部 ${terms.length} 条候选术语`;
+    };
+  </script>
+</body>
+</html>
