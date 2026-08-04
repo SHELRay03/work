@@ -23,6 +23,7 @@
       <a href="replace.html">术语替换</a>
       <a href="identify.html" class="active">术语识别</a>
       <a href="fix.html">SRT 修复</a>
+      <button type="button" class="ai-settings-btn" id="btnAiSettings" title="AI 设置">⚙ AI</button>
     </nav>
   </header>
   <main class="hud-main">
@@ -82,6 +83,8 @@
           已选择 <span id="selectedCount" class="batch-count">0</span> 项
         </div>
         <div class="batch-actions">
+          <button type="button" class="btn-small btn-ai" id="btnAiRefine">✨ AI 精排</button>
+          <span class="batch-divider"></span>
           <button type="button" class="btn-small" id="btnSelectAll">全选当前</button>
           <button type="button" class="btn-small" id="btnInvertAll">反选当前</button>
           <button type="button" class="btn-small" id="btnSelectPerson">全选人名</button>
@@ -211,7 +214,9 @@
         <button type="button" class="modal-close" id="modalClose">×</button>
       </div>
       <div class="modal-body" id="modalBody"></div>
+      <div class="ai-explain-area" id="aiExplainArea" hidden></div>
       <div class="modal-footer">
+        <button type="button" class="btn-small btn-ai" id="modalAiExplain">🤖 询问 AI</button>
         <button type="button" class="btn-small" id="modalToggleCheck">勾选/取消勾选</button>
         <div class="modal-nav">
           <button type="button" class="btn-small" id="modalPrev">← 上一个</button>
@@ -221,7 +226,33 @@
     </div>
   </div>
 
-  <script src="srt.js?v=6"></script>
+  <!-- AI 设置 Modal -->
+  <div id="aiSettingsModal" class="modal" hidden>
+    <div class="modal-backdrop"></div>
+    <div class="modal-content modal-sm">
+      <div class="modal-header">
+        <h3>⚙ AI 设置</h3>
+        <button type="button" class="modal-close" id="aiSettingsClose">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="ai-settings-form">
+          <label class="ai-label">智谱 API Key</label>
+          <input type="password" id="aiApiKeyInput" class="ai-input" placeholder="粘贴你的智谱 API Key" autocomplete="off" />
+          <p class="ai-help">
+            Key 仅保存在本浏览器（localStorage），不会上传到任何服务器。<br>
+            获取地址：<a href="https://open.bigmodel.cn/usercenter/apikeys" target="_blank" rel="noopener">智谱开放平台 → API Keys</a>
+          </p>
+          <div class="ai-status" id="aiKeyStatus"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-small btn-danger" id="btnAiKeyClear">清除 Key</button>
+        <button type="button" class="btn-small" id="btnAiKeySave">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="srt.js?v=7"></script>
   <script>
     let sourceType = null;
     let subtitleFiles = [];
@@ -412,6 +443,41 @@
       return `<td class="col-check"><input type="checkbox" class="term-check" data-idx="${idx}" ${selectedIndices.has(idx) ? 'checked' : ''} /></td>`;
     }
 
+    // 渲染前保存 Target 输入框的值到 candidates 对象（首个非空值生效，避免跨Tab覆盖）
+    function saveTargetsToCandidates() {
+      const collected = {};
+      document.querySelectorAll('.target-input').forEach(input => {
+        const idx = parseInt(input.dataset.idx);
+        if (idx >= 0 && idx < candidates.length) {
+          const val = input.value.trim();
+          // 首个非空值生效
+          if (!collected[idx] || !collected[idx].trim()) {
+            collected[idx] = val;
+          }
+        }
+      });
+      for (const [idx, val] of Object.entries(collected)) {
+        candidates[parseInt(idx)].target = val;
+      }
+    }
+
+    // 获取显示用的类别和标记
+    function getDisplayCategory(c) {
+      if (c.aiCategory) return c.aiCategory;
+      return c.category;
+    }
+
+    function getDisplayTarget(c) {
+      return c.target || c.aiTarget || '';
+    }
+
+    // HTML 转义，防止 XSS
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
     function renderAll(list) {
       const body = document.getElementById('allBody');
       body.innerHTML = '';
@@ -424,15 +490,18 @@
       list.forEach((c, i) => {
         const tr = document.createElement('tr');
         tr.dataset.idx = i;
+        if (c.aiRejected) tr.classList.add('row-ai-rejected');
         const sampleCtx = c.sampleContexts && c.sampleContexts.length > 0 
           ? `<span class="ctx-sample" title="${c.sampleContexts[0].file}">${c.sampleContexts[0].context.substring(0, 30)}...</span>`
           : '-';
+        const aiMark = c.aiCategory ? '<span class="ai-mark" title="AI 精排">AI</span>' : '';
+        const displayCat = getDisplayCategory(c);
         tr.innerHTML = `
           ${createCheckboxCell(i)}
           <td>${i + 1}</td>
-          <td class="term-source" data-idx="${i}" style="cursor:pointer"><strong style="color:var(--mint-deep)">${c.source}</strong></td>
-          <td><input type="text" class="target-input" data-idx="${i}" data-field="target" value="" placeholder="填写..." /></td>
-          <td><span class="cat-badge ${categoryClass(c.category)}">${c.category}</span></td>
+          <td class="term-source" data-idx="${i}" style="cursor:pointer"><strong style="color:var(--mint-deep)">${c.source}</strong>${aiMark}</td>
+          <td><input type="text" class="target-input" data-idx="${i}" data-field="target" value="${getDisplayTarget(c)}" placeholder="填写..." /></td>
+          <td><span class="cat-badge ${categoryClass(displayCat)}">${displayCat}</span></td>
           <td><span class="detect-tag">${c.detectedBy || ''}</span></td>
           <td>${c.frequency}</td>
           <td>${c.fileCount}</td>
@@ -452,12 +521,12 @@
       let filtered = [];
       if (filter === 'other') {
         filtered = list.filter(c => {
-          const ct = c.category;
+          const ct = getDisplayCategory(c);
           return !ct.includes('人') && !ct.includes('官职') && !ct.includes('地名');
         });
       } else {
         filtered = list.filter(c => {
-          const ct = c.category;
+          const ct = getDisplayCategory(c);
           return (filter === 'person' && (ct.includes('人') || c.contextType === 'person')) ||
                  (filter === 'role' && (ct.includes('官职') || c.contextType === 'role')) ||
                  (filter === 'place' && (ct.includes('地名') || c.contextType === 'place'));
@@ -473,14 +542,16 @@
         const globalIdx = list.indexOf(c);
         const tr = document.createElement('tr');
         tr.dataset.idx = globalIdx;
+        if (c.aiRejected) tr.classList.add('row-ai-rejected');
         const sampleCtx = c.sampleContexts && c.sampleContexts.length > 0 
           ? `<span class="ctx-sample" title="${c.sampleContexts[0].file}">${c.sampleContexts[0].context.substring(0, 40)}</span>`
           : '-';
+        const aiMark = c.aiCategory ? '<span class="ai-mark" title="AI 精排">AI</span>' : '';
         tr.innerHTML = `
           ${createCheckboxCell(globalIdx)}
           <td>${i + 1}</td>
-          <td class="term-source" data-idx="${globalIdx}" style="cursor:pointer"><strong style="color:var(--mint-deep)">${c.source}</strong></td>
-          <td><input type="text" class="target-input" data-idx="${globalIdx}" data-field="target" value="" placeholder="填写..." /></td>
+          <td class="term-source" data-idx="${globalIdx}" style="cursor:pointer"><strong style="color:var(--mint-deep)">${c.source}</strong>${aiMark}</td>
+          <td><input type="text" class="target-input" data-idx="${globalIdx}" data-field="target" value="${getDisplayTarget(c)}" placeholder="填写..." /></td>
           <td><span class="detect-tag">${c.detectedBy || ''}</span></td>
           <td>${c.frequency}</td>
           <td>${sampleCtx}</td>
@@ -1066,8 +1137,186 @@
       statusIdentify.textContent = `已导出 ${terms.length} 条${onlySelected ? '选中' : '全部'}候选术语`;
     };
 
-    // 初始化
+    // ========== AI 设置管理 ==========
+
+    const aiSettingsModal = document.getElementById('aiSettingsModal');
+    const aiApiKeyInput = document.getElementById('aiApiKeyInput');
+    const aiKeyStatus = document.getElementById('aiKeyStatus');
+
+    function updateAiKeyStatus() {
+      const hasKey = !!getZhipuApiKey();
+      if (hasKey) {
+        aiKeyStatus.className = 'ai-status ok';
+        aiKeyStatus.textContent = '✓ 已配置 API Key';
+        document.getElementById('btnAiSettings').classList.add('ai-active');
+      } else {
+        aiKeyStatus.className = 'ai-status warn';
+        aiKeyStatus.textContent = '⚠ 尚未配置 API Key，AI 功能不可用';
+        document.getElementById('btnAiSettings').classList.remove('ai-active');
+      }
+    }
+
+    document.getElementById('btnAiSettings').addEventListener('click', () => {
+      aiApiKeyInput.value = getZhipuApiKey();
+      updateAiKeyStatus();
+      aiSettingsModal.hidden = false;
+    });
+
+    document.getElementById('aiSettingsClose').addEventListener('click', () => {
+      aiSettingsModal.hidden = true;
+    });
+    aiSettingsModal.querySelector('.modal-backdrop').addEventListener('click', () => {
+      aiSettingsModal.hidden = true;
+    });
+
+    document.getElementById('btnAiKeySave').addEventListener('click', () => {
+      const key = aiApiKeyInput.value.trim();
+      if (!key) {
+        alert('请输入 API Key');
+        return;
+      }
+      setZhipuApiKey(key);
+      updateAiKeyStatus();
+      aiSettingsModal.hidden = true;
+      statusIdentify.className = 'status ok';
+      statusIdentify.textContent = 'AI API Key 已保存';
+    });
+
+    document.getElementById('btnAiKeyClear').addEventListener('click', () => {
+      localStorage.removeItem('zhipu_api_key');
+      aiApiKeyInput.value = '';
+      updateAiKeyStatus();
+    });
+
+    // ========== AI 精排 ==========
+
+    document.getElementById('btnAiRefine').addEventListener('click', async () => {
+      if (!candidates.length) return alert('请先识别术语');
+      if (!getZhipuApiKey()) {
+        alert('请先点击右上角"⚙ AI"设置 API Key');
+        return;
+      }
+
+      const btn = document.getElementById('btnAiRefine');
+      const scene = document.getElementById('sceneSelect').value;
+      btn.disabled = true;
+      btn.textContent = '✨ AI 精排中…';
+      statusIdentify.className = 'status';
+      statusIdentify.textContent = 'AI 精排中，请稍候…';
+
+      try {
+        const batchSize = 20;
+        const total = candidates.length;
+        let processed = 0;
+        let rejectCount = 0;
+        let refineCount = 0;
+
+        // 精排前重置所有 AI 标记，避免上次残留
+        candidates.forEach(c => {
+          c.aiRejected = false;
+          c.aiCategory = '';
+          c.aiReason = '';
+          c.aiTarget = '';
+        });
+
+        for (let start = 0; start < total; start += batchSize) {
+          const batch = candidates.slice(start, start + batchSize);
+          const results = await zhipuRefineTerms(batch, scene);
+
+          for (const r of results) {
+            const idx = start + (parseInt(r.index, 10) || 0) - 1;
+            // 检查总范围 + 批次范围
+            if (idx < start || idx >= start + batch.length || idx >= candidates.length) continue;
+            const c = candidates[idx];
+
+            if (r.is_term === false || r.category === 'reject') {
+              // 标记为非术语
+              c.aiRejected = true;
+              c.aiCategory = '非术语';
+              c.aiReason = r.reason || '';
+              rejectCount++;
+            } else {
+              // 更新分类和翻译建议
+              c.aiRejected = false;
+              c.aiCategory = r.category || c.category;
+              c.aiReason = r.reason || '';
+              if (r.target && r.target !== '无需翻译') {
+                c.aiTarget = r.target;
+                // 自动填充到 Target 输入框
+                const input = document.querySelector(`.target-input[data-idx="${idx}"]`);
+                if (input && !input.value.trim()) {
+                  input.value = r.target;
+                }
+              }
+              refineCount++;
+            }
+          }
+
+          processed += batch.length;
+          statusIdentify.textContent = `AI 精排中… ${processed}/${total}`;
+        }
+
+        // 保存当前 Target 值后再重新渲染
+        saveTargetsToCandidates();
+        renderAll(candidates);
+        renderByCategory(candidates, 'person', 'personBody');
+        renderByCategory(candidates, 'role', 'roleBody');
+        renderByCategory(candidates, 'place', 'placeBody');
+        renderByCategory(candidates, 'other', 'otherBody');
+
+        statusIdentify.className = 'status ok';
+        statusIdentify.textContent = `AI 精排完成！确认 ${refineCount} 条术语，排除 ${rejectCount} 条非术语`;
+
+      } catch (e) {
+        statusIdentify.className = 'status err';
+        statusIdentify.textContent = 'AI 精排失败：' + e.message;
+        console.error(e);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '✨ AI 精排';
+      }
+    });
+
+    // ========== AI 解释（上下文 Modal 内） ==========
+
+    document.getElementById('modalAiExplain').addEventListener('click', async () => {
+      if (currentFocusIdx < 0) return;
+      if (!getZhipuApiKey()) {
+        alert('请先点击右上角"⚙ AI"设置 API Key');
+        return;
+      }
+
+      const candidate = candidates[currentFocusIdx];
+      const btn = document.getElementById('modalAiExplain');
+      const explainArea = document.getElementById('aiExplainArea');
+
+      btn.disabled = true;
+      btn.textContent = '🤖 AI 分析中…';
+      explainArea.hidden = false;
+      explainArea.innerHTML = '<div class="ai-explain-loading">AI 正在分析上下文…</div>';
+
+      try {
+        const contexts = await getLineContext(candidate.source, 5);
+        const scene = document.getElementById('sceneSelect').value;
+        const result = await zhipuExplainTerm(candidate.source, contexts, scene);
+
+        explainArea.innerHTML = `
+          <div class="ai-explain-header">🤖 AI 分析结果</div>
+          <div class="ai-explain-content">${escapeHtml(result).replace(/\n/g, '<br>')}</div>
+        `;
+
+      } catch (e) {
+        explainArea.innerHTML = `<div class="ai-explain-error">AI 分析失败：${escapeHtml(e.message)}</div>`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '🤖 询问 AI';
+      }
+    });
+
+    // ========== 初始化 ==========
+
     updateSelectedCount();
+    updateAiKeyStatus();
   </script>
 </body>
 </html>
