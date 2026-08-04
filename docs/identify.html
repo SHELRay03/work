@@ -76,11 +76,30 @@
         <button type="button" class="tab-btn" data-tab="other">其他术语</button>
       </div>
 
+      <!-- 批量操作工具栏 -->
+      <div class="batch-toolbar" id="batchToolbar" hidden>
+        <div class="batch-info">
+          已选择 <span id="selectedCount" class="batch-count">0</span> 项
+        </div>
+        <div class="batch-actions">
+          <button type="button" class="btn-small" id="btnSelectAll">全选当前</button>
+          <button type="button" class="btn-small" id="btnInvertAll">反选当前</button>
+          <button type="button" class="btn-small" id="btnSelectPerson">全选人名</button>
+          <button type="button" class="btn-small" id="btnSelectRole">全选官职</button>
+          <button type="button" class="btn-small" id="btnSelectPlace">全选地名</button>
+          <button type="button" class="btn-small btn-danger" id="btnClearSelection">清空</button>
+        </div>
+        <div class="shortcut-hint">
+          💡 快捷键：<kbd>←</kbd><kbd>→</kbd> 切换 | <kbd>Space</kbd> 勾选 | <kbd>Del</kbd> 忽略
+        </div>
+      </div>
+
       <div id="allTab" class="tab-content">
         <div class="diff-table-wrap">
           <table class="diff-table">
             <thead>
               <tr>
+                <th class="col-check"><input type="checkbox" id="checkAll" /></th>
                 <th>#</th>
                 <th>Source</th>
                 <th>Target</th>
@@ -102,6 +121,7 @@
           <table class="diff-table">
             <thead>
               <tr>
+                <th class="col-check"><input type="checkbox" id="checkPersonAll" /></th>
                 <th>#</th>
                 <th>Source</th>
                 <th>Target</th>
@@ -121,6 +141,7 @@
           <table class="diff-table">
             <thead>
               <tr>
+                <th class="col-check"><input type="checkbox" id="checkRoleAll" /></th>
                 <th>#</th>
                 <th>Source</th>
                 <th>Target</th>
@@ -140,6 +161,7 @@
           <table class="diff-table">
             <thead>
               <tr>
+                <th class="col-check"><input type="checkbox" id="checkPlaceAll" /></th>
                 <th>#</th>
                 <th>Source</th>
                 <th>Target</th>
@@ -159,6 +181,7 @@
           <table class="diff-table">
             <thead>
               <tr>
+                <th class="col-check"><input type="checkbox" id="checkOtherAll" /></th>
                 <th>#</th>
                 <th>Source</th>
                 <th>Target</th>
@@ -178,13 +201,40 @@
       </div>
     </section>
   </main>
-  <script src="srt.js?v=5"></script>
+
+  <!-- 上下文预览 Modal -->
+  <div id="contextModal" class="modal" hidden>
+    <div class="modal-backdrop"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modalTitle">上下文预览</h3>
+        <button type="button" class="modal-close" id="modalClose">×</button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn-small" id="modalToggleCheck">勾选/取消勾选</button>
+        <div class="modal-nav">
+          <button type="button" class="btn-small" id="modalPrev">← 上一个</button>
+          <button type="button" class="btn-small" id="modalNext">下一个 →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="srt.js?v=6"></script>
   <script>
     let sourceType = null;
     let subtitleFiles = [];
     let droppedSrtFiles = [];
     let candidates = [];
     let fullResult = null;
+
+    // 全局状态管理
+    const selectedIndices = new Set();
+    let currentFocusIdx = -1;
+    let currentTab = 'all';
+    // SRT 解析缓存，避免重复解析
+    const parsedSrtCache = new Map();
 
     const subsIdentifyZip = document.getElementById('subsIdentifyZip');
     const subsIdentifyFolder = document.getElementById('subsIdentifyFolder');
@@ -245,6 +295,7 @@
 
     async function loadSubtitleFiles() {
       subtitleFiles = [];
+      parsedSrtCache.clear(); // 清理缓存
       
       if (sourceType === 'zip') {
         const z = subsIdentifyZip.files[0];
@@ -303,6 +354,7 @@
         });
         
         candidates = fullResult.candidates;
+        selectedIndices.clear();
         
         // 渲染所有分类
         renderAll(candidates);
@@ -314,12 +366,15 @@
         const resultPanel = document.getElementById('resultPanel');
         resultPanel.hidden = false;
         
+        // 显示批量工具栏
+        document.getElementById('batchToolbar').hidden = false;
+        
         // 统计各类数量
         const counts = { person: 0, role: 0, place: 0, other: 0 };
         for (const c of candidates) {
           const ct = c.category;
           if (ct.includes('人') || c.contextType === 'person') counts.person++;
-          else if (ct.includes('官职') || ct.contextType === 'role') counts.role++;
+          else if (ct.includes('官职') || c.contextType === 'role') counts.role++;
           else if (ct.includes('地名') || c.contextType === 'place') counts.place++;
           else counts.other++;
         }
@@ -351,23 +406,31 @@
       return 'cat-other';
     }
 
+    // ========== 渲染函数 ==========
+
+    function createCheckboxCell(idx) {
+      return `<td class="col-check"><input type="checkbox" class="term-check" data-idx="${idx}" ${selectedIndices.has(idx) ? 'checked' : ''} /></td>`;
+    }
+
     function renderAll(list) {
       const body = document.getElementById('allBody');
       body.innerHTML = '';
       
       if (list.length === 0) {
-        body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#999;padding:1rem">未识别到术语</td></tr>';
+        body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#999;padding:1rem">未识别到术语</td></tr>';
         return;
       }
       
       list.forEach((c, i) => {
         const tr = document.createElement('tr');
+        tr.dataset.idx = i;
         const sampleCtx = c.sampleContexts && c.sampleContexts.length > 0 
           ? `<span class="ctx-sample" title="${c.sampleContexts[0].file}">${c.sampleContexts[0].context.substring(0, 30)}...</span>`
           : '-';
         tr.innerHTML = `
+          ${createCheckboxCell(i)}
           <td>${i + 1}</td>
-          <td><strong style="color:var(--mint-deep)">${c.source}</strong></td>
+          <td class="term-source" data-idx="${i}" style="cursor:pointer"><strong style="color:var(--mint-deep)">${c.source}</strong></td>
           <td><input type="text" class="target-input" data-idx="${i}" data-field="target" value="" placeholder="填写..." /></td>
           <td><span class="cat-badge ${categoryClass(c.category)}">${c.category}</span></td>
           <td><span class="detect-tag">${c.detectedBy || ''}</span></td>
@@ -377,6 +440,9 @@
         `;
         body.appendChild(tr);
       });
+      
+      attachRowEventListeners(body);
+      updateHeaderCheckbox('all');
     }
 
     function renderByCategory(list, filter, bodyId) {
@@ -399,19 +465,21 @@
       }
       
       if (filtered.length === 0) {
-        body.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#999;padding:1rem">暂无此类术语</td></tr>`;
+        body.innerHTML = `<tr><td colspan="7" style="text-align:center;color:#999;padding:1rem">暂无此类术语</td></tr>`;
         return;
       }
       
       filtered.forEach((c, i) => {
         const globalIdx = list.indexOf(c);
         const tr = document.createElement('tr');
+        tr.dataset.idx = globalIdx;
         const sampleCtx = c.sampleContexts && c.sampleContexts.length > 0 
           ? `<span class="ctx-sample" title="${c.sampleContexts[0].file}">${c.sampleContexts[0].context.substring(0, 40)}</span>`
           : '-';
         tr.innerHTML = `
+          ${createCheckboxCell(globalIdx)}
           <td>${i + 1}</td>
-          <td><strong style="color:var(--mint-deep)">${c.source}</strong></td>
+          <td class="term-source" data-idx="${globalIdx}" style="cursor:pointer"><strong style="color:var(--mint-deep)">${c.source}</strong></td>
           <td><input type="text" class="target-input" data-idx="${globalIdx}" data-field="target" value="" placeholder="填写..." /></td>
           <td><span class="detect-tag">${c.detectedBy || ''}</span></td>
           <td>${c.frequency}</td>
@@ -419,18 +487,506 @@
         `;
         body.appendChild(tr);
       });
+      
+      attachRowEventListeners(body);
+      updateHeaderCheckbox(filter);
     }
 
-    // Tab切换
+    function attachRowEventListeners(body) {
+      // checkbox 事件
+      body.querySelectorAll('.term-check').forEach(cb => {
+        cb.addEventListener('change', (e) => {
+          const idx = parseInt(e.target.dataset.idx);
+          if (e.target.checked) {
+            selectedIndices.add(idx);
+          } else {
+            selectedIndices.delete(idx);
+          }
+          syncCheckboxState(idx);
+          updateSelectedCount();
+          updateHeaderCheckbox(currentTab);
+        });
+      });
+      
+      // source 点击事件 -> 打开上下文预览
+      body.querySelectorAll('.term-source').forEach(cell => {
+        cell.addEventListener('click', (e) => {
+          const idx = parseInt(e.currentTarget.dataset.idx);
+          showContextModal(idx);
+        });
+      });
+    }
+
+    // 同步所有Tab中同一idx的checkbox状态
+    function syncCheckboxState(idx) {
+      document.querySelectorAll(`.term-check[data-idx="${idx}"]`).forEach(cb => {
+        cb.checked = selectedIndices.has(idx);
+      });
+      // 更新行高亮
+      document.querySelectorAll(`tr[data-idx="${idx}"]`).forEach(tr => {
+        if (selectedIndices.has(idx)) {
+          tr.classList.add('row-selected');
+        } else {
+          tr.classList.remove('row-selected');
+        }
+      });
+    }
+
+    function updateSelectedCount() {
+      document.getElementById('selectedCount').textContent = selectedIndices.size;
+    }
+
+    function updateHeaderCheckbox(tab) {
+      let containerId;
+      if (tab === 'all') containerId = 'allBody';
+      else if (tab === 'person') containerId = 'personBody';
+      else if (tab === 'role') containerId = 'roleBody';
+      else if (tab === 'place') containerId = 'placeBody';
+      else if (tab === 'other') containerId = 'otherBody';
+      
+      let headerId;
+      if (tab === 'all') headerId = 'checkAll';
+      else if (tab === 'person') headerId = 'checkPersonAll';
+      else if (tab === 'role') headerId = 'checkRoleAll';
+      else if (tab === 'place') headerId = 'checkPlaceAll';
+      else if (tab === 'other') headerId = 'checkOtherAll';
+      
+      if (!containerId || !headerId) return;
+      
+      const checkboxes = document.querySelectorAll(`#${containerId} .term-check`);
+      if (checkboxes.length === 0) {
+        document.getElementById(headerId).checked = false;
+        document.getElementById(headerId).indeterminate = false;
+        return;
+      }
+      
+      const checkedCount = [...checkboxes].filter(cb => cb.checked).length;
+      const headerCb = document.getElementById(headerId);
+      headerCb.checked = checkedCount === checkboxes.length;
+      headerCb.indeterminate = checkedCount > 0 && checkedCount < checkboxes.length;
+    }
+
+    // ========== Tab切换 ==========
     document.querySelectorAll('.tab-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const tab = btn.dataset.tab;
+        currentTab = tab;
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         document.querySelectorAll('.tab-content').forEach(c => c.hidden = true);
         document.getElementById(tab + 'Tab').hidden = false;
+        updateHeaderCheckbox(tab);
       });
     });
+
+    // 全选复选框
+    ['all', 'person', 'role', 'place', 'other'].forEach(tab => {
+      let headerId;
+      if (tab === 'all') headerId = 'checkAll';
+      else if (tab === 'person') headerId = 'checkPersonAll';
+      else if (tab === 'role') headerId = 'checkRoleAll';
+      else if (tab === 'place') headerId = 'checkPlaceAll';
+      else if (tab === 'other') headerId = 'checkOtherAll';
+      
+      const headerCb = document.getElementById(headerId);
+      if (headerCb) {
+        headerCb.addEventListener('change', (e) => {
+          const containerId = tab + 'Body';
+          const checkboxes = document.querySelectorAll(`#${containerId} .term-check`);
+          checkboxes.forEach(cb => {
+            const idx = parseInt(cb.dataset.idx);
+            if (e.target.checked) {
+              selectedIndices.add(idx);
+            } else {
+              selectedIndices.delete(idx);
+            }
+          });
+          // 同步所有
+          selectedIndices.forEach(idx => syncCheckboxState(idx));
+          // 更新未选中的
+          for (let i = 0; i < candidates.length; i++) {
+            if (!selectedIndices.has(i)) syncCheckboxState(i);
+          }
+          updateSelectedCount();
+        });
+      }
+    });
+
+    // ========== 批量操作 ==========
+    
+    function getCurrentTabIndices(tab) {
+      let filtered;
+      if (tab === 'all') {
+        filtered = candidates;
+      } else if (tab === 'person') {
+        filtered = candidates.filter(c => {
+          const ct = c.category;
+          return ct.includes('人') || c.contextType === 'person';
+        });
+      } else if (tab === 'role') {
+        filtered = candidates.filter(c => {
+          const ct = c.category;
+          return ct.includes('官职') || c.contextType === 'role';
+        });
+      } else if (tab === 'place') {
+        filtered = candidates.filter(c => {
+          const ct = c.category;
+          return ct.includes('地名') || c.contextType === 'place';
+        });
+      } else if (tab === 'other') {
+        filtered = candidates.filter(c => {
+          const ct = c.category;
+          return !ct.includes('人') && !ct.includes('官职') && !ct.includes('地名');
+        });
+      }
+      return filtered.map(c => candidates.indexOf(c));
+    }
+
+    document.getElementById('btnSelectAll').addEventListener('click', () => {
+      const indices = getCurrentTabIndices(currentTab);
+      indices.forEach(idx => selectedIndices.add(idx));
+      refreshAllCheckboxes();
+    });
+
+    document.getElementById('btnInvertAll').addEventListener('click', () => {
+      const indices = getCurrentTabIndices(currentTab);
+      indices.forEach(idx => {
+        if (selectedIndices.has(idx)) {
+          selectedIndices.delete(idx);
+        } else {
+          selectedIndices.add(idx);
+        }
+      });
+      refreshAllCheckboxes();
+    });
+
+    document.getElementById('btnSelectPerson').addEventListener('click', () => {
+      const indices = candidates
+        .map((c, i) => ({ c, i }))
+        .filter(x => {
+          const ct = x.c.category;
+          return ct.includes('人') || x.c.contextType === 'person';
+        })
+        .map(x => x.i);
+      indices.forEach(idx => selectedIndices.add(idx));
+      refreshAllCheckboxes();
+    });
+
+    document.getElementById('btnSelectRole').addEventListener('click', () => {
+      const indices = candidates
+        .map((c, i) => ({ c, i }))
+        .filter(x => {
+          const ct = x.c.category;
+          return ct.includes('官职') || x.c.contextType === 'role';
+        })
+        .map(x => x.i);
+      indices.forEach(idx => selectedIndices.add(idx));
+      refreshAllCheckboxes();
+    });
+
+    document.getElementById('btnSelectPlace').addEventListener('click', () => {
+      const indices = candidates
+        .map((c, i) => ({ c, i }))
+        .filter(x => {
+          const ct = x.c.category;
+          return ct.includes('地名') || x.c.contextType === 'place';
+        })
+        .map(x => x.i);
+      indices.forEach(idx => selectedIndices.add(idx));
+      refreshAllCheckboxes();
+    });
+
+    document.getElementById('btnClearSelection').addEventListener('click', () => {
+      selectedIndices.clear();
+      refreshAllCheckboxes();
+    });
+
+    function refreshAllCheckboxes() {
+      for (let i = 0; i < candidates.length; i++) {
+        syncCheckboxState(i);
+      }
+      updateSelectedCount();
+      // 更新所有 Tab 的表头状态
+      ['all', 'person', 'role', 'place', 'other'].forEach(tab => {
+        updateHeaderCheckbox(tab);
+      });
+    }
+
+    // ========== 上下文预览 ==========
+
+    // 获取或解析 SRT 文件（带缓存）
+    function getCachedSrt(fileName, content) {
+      if (!parsedSrtCache.has(fileName)) {
+        parsedSrtCache.set(fileName, parseSrt(content));
+      }
+      return parsedSrtCache.get(fileName);
+    }
+
+    async function getLineContext(phrase, maxSamples = 5) {
+      const results = [];
+      const usedFiles = new Set();
+      
+      for (const file of subtitleFiles) {
+        const subs = getCachedSrt(file.name, file.content);
+        if (subs.length === 0) continue;
+        
+        for (let i = 0; i < subs.length; i++) {
+          const sub = subs[i];
+          if (!sub.text || !sub.text.trim()) continue;
+          
+          const text = sub.text.replace(/\n/g, '');
+          if (text.includes(phrase)) {
+            // 获取前后3行
+            const start = Math.max(0, i - 3);
+            const end = Math.min(subs.length, i + 4);
+            const contextLines = [];
+            
+            for (let j = start; j < end; j++) {
+              if (!subs[j].text || !subs[j].text.trim()) continue;
+              const line = {
+                index: subs[j].index,
+                start: formatTimecode(subs[j].start),
+                end: formatTimecode(subs[j].end),
+                text: subs[j].text.replace(/\n/g, ''),
+                isMatch: j === i
+              };
+              contextLines.push(line);
+            }
+            
+            results.push({
+              file: file.name,
+              lines: contextLines
+            });
+            
+            if (results.length >= maxSamples) return results;
+          }
+        }
+      }
+      
+      return results;
+    }
+
+    async function showContextModal(idx) {
+      const candidate = candidates[idx];
+      if (!candidate) return;
+      
+      currentFocusIdx = idx;
+      const modal = document.getElementById('contextModal');
+      const modalTitle = document.getElementById('modalTitle');
+      const modalBody = document.getElementById('modalBody');
+      
+      modalTitle.textContent = `上下文预览：${candidate.source}`;
+      modalBody.innerHTML = '<div class="modal-loading">加载中...</div>';
+      modal.hidden = false;
+      
+      try {
+        const contexts = await getLineContext(candidate.source, 8);
+        
+        if (contexts.length === 0) {
+          modalBody.innerHTML = '<div class="no-context">未找到匹配上下文</div>';
+        } else {
+          modalBody.innerHTML = contexts.map((ctx, ci) => `
+            <div class="context-group">
+              <div class="context-file">📄 ${ctx.file}</div>
+              <div class="context-lines">
+                ${ctx.lines.map(line => `
+                  <div class="context-line ${line.isMatch ? 'line-match' : ''}">
+                    <span class="line-index">#${line.index}</span>
+                    <span class="line-time">${line.start} → ${line.end}</span>
+                    <span class="line-text">${highlightPhrase(line.text, candidate.source)}</span>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          `).join('');
+        }
+        
+        // 更新按钮状态
+        updateModalButtons();
+        
+      } catch (e) {
+        modalBody.innerHTML = '<div class="no-context">加载失败：' + e.message + '</div>';
+      }
+    }
+
+    function highlightPhrase(text, phrase) {
+      if (!phrase) return text;
+      const regex = new RegExp(escapeRegex(phrase), 'g');
+      return text.replace(regex, `<mark class="phrase-highlight">$&</mark>`);
+    }
+
+    function updateModalButtons() {
+      const toggleBtn = document.getElementById('modalToggleCheck');
+      if (selectedIndices.has(currentFocusIdx)) {
+        toggleBtn.textContent = '取消勾选';
+        toggleBtn.classList.add('btn-uncheck');
+      } else {
+        toggleBtn.textContent = '勾选此术语';
+        toggleBtn.classList.remove('btn-uncheck');
+      }
+      
+      document.getElementById('modalPrev').disabled = currentFocusIdx <= 0;
+      document.getElementById('modalNext').disabled = currentFocusIdx >= candidates.length - 1;
+    }
+
+    // Modal 事件
+    document.getElementById('modalClose').addEventListener('click', () => {
+      document.getElementById('contextModal').hidden = true;
+    });
+
+    document.getElementById('contextModal').querySelector('.modal-backdrop').addEventListener('click', () => {
+      document.getElementById('contextModal').hidden = true;
+    });
+
+    document.getElementById('modalToggleCheck').addEventListener('click', () => {
+      if (currentFocusIdx < 0) return;
+      if (selectedIndices.has(currentFocusIdx)) {
+        selectedIndices.delete(currentFocusIdx);
+      } else {
+        selectedIndices.add(currentFocusIdx);
+      }
+      syncCheckboxState(currentFocusIdx);
+      updateSelectedCount();
+      updateHeaderCheckbox(currentTab);
+      updateModalButtons();
+    });
+
+    document.getElementById('modalPrev').addEventListener('click', () => {
+      if (currentFocusIdx > 0) {
+        showContextModal(currentFocusIdx - 1);
+      }
+    });
+
+    document.getElementById('modalNext').addEventListener('click', () => {
+      if (currentFocusIdx < candidates.length - 1) {
+        showContextModal(currentFocusIdx + 1);
+      }
+    });
+
+    // ========== 键盘快捷键 ==========
+
+    document.addEventListener('keydown', (e) => {
+      // 如果在 input/textarea 中，不触发快捷键
+      const tag = document.activeElement.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') {
+        // 但如果是 checkbox，可以响应
+        if (document.activeElement.type !== 'checkbox') {
+          return;
+        }
+      }
+      
+      // Modal 打开时的快捷键
+      const modal = document.getElementById('contextModal');
+      if (!modal.hidden) {
+        if (e.key === 'ArrowLeft' && currentFocusIdx > 0) {
+          e.preventDefault();
+          showContextModal(currentFocusIdx - 1);
+        } else if (e.key === 'ArrowRight' && currentFocusIdx < candidates.length - 1) {
+          e.preventDefault();
+          showContextModal(currentFocusIdx + 1);
+        } else if (e.key === ' ') {
+          e.preventDefault();
+          document.getElementById('modalToggleCheck').click();
+        } else if (e.key === 'Delete' || e.key === 'Backspace') {
+          e.preventDefault();
+          if (currentFocusIdx >= 0) {
+            selectedIndices.delete(currentFocusIdx);
+            syncCheckboxState(currentFocusIdx);
+            updateSelectedCount();
+            updateHeaderCheckbox(currentTab);
+            updateModalButtons();
+          }
+        } else if (e.key === 'Escape') {
+          modal.hidden = true;
+        }
+        return;
+      }
+      
+      // Modal 关闭时的快捷键 - 行导航
+      if (candidates.length === 0) return;
+      
+      // 获取当前Tab的所有行
+      let rows = [];
+      if (currentTab === 'all') {
+        rows = document.querySelectorAll('#allBody tr');
+      } else if (currentTab === 'person') {
+        rows = document.querySelectorAll('#personBody tr');
+      } else if (currentTab === 'role') {
+        rows = document.querySelectorAll('#roleBody tr');
+      } else if (currentTab === 'place') {
+        rows = document.querySelectorAll('#placeBody tr');
+      } else if (currentTab === 'other') {
+        rows = document.querySelectorAll('#otherBody tr');
+      }
+      
+      if (rows.length === 0) return;
+      
+      if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        if (currentFocusIdx < 0) {
+          currentFocusIdx = 0;
+        } else {
+          // 找到当前Tab中的下一个术语
+          const currentIndices = Array.from(rows).map(tr => parseInt(tr.dataset.idx));
+          const pos = currentIndices.indexOf(currentFocusIdx);
+          if (pos < currentIndices.length - 1) {
+            currentFocusIdx = currentIndices[pos + 1];
+          } else if (pos < 0) {
+            currentFocusIdx = currentIndices[0];
+          }
+        }
+        highlightCurrentRow();
+      } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        if (currentFocusIdx < 0) {
+          currentFocusIdx = 0;
+        } else {
+          const currentIndices = Array.from(rows).map(tr => parseInt(tr.dataset.idx));
+          const pos = currentIndices.indexOf(currentFocusIdx);
+          if (pos > 0) {
+            currentFocusIdx = currentIndices[pos - 1];
+          } else if (pos < 0) {
+            currentFocusIdx = currentIndices[currentIndices.length - 1];
+          }
+        }
+        highlightCurrentRow();
+      } else if (e.key === ' ') {
+        e.preventDefault();
+        if (currentFocusIdx >= 0) {
+          if (selectedIndices.has(currentFocusIdx)) {
+            selectedIndices.delete(currentFocusIdx);
+          } else {
+            selectedIndices.add(currentFocusIdx);
+          }
+          syncCheckboxState(currentFocusIdx);
+          updateSelectedCount();
+          updateHeaderCheckbox(currentTab);
+        }
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (currentFocusIdx >= 0) {
+          showContextModal(currentFocusIdx);
+        }
+      }
+    });
+
+    function highlightCurrentRow() {
+      // 移除之前的高亮
+      document.querySelectorAll('tr.row-focus').forEach(tr => tr.classList.remove('row-focus'));
+      
+      if (currentFocusIdx >= 0) {
+        const rows = document.querySelectorAll(`tr[data-idx="${currentFocusIdx}"]`);
+        rows.forEach(tr => {
+          tr.classList.add('row-focus');
+          // 滚动到可见区域
+          if (tr.offsetParent !== null) {
+            tr.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        });
+      }
+    }
+
+    // ========== 导出功能 ==========
 
     function collectTargets() {
       const inputs = document.querySelectorAll('.target-input');
@@ -444,13 +1000,14 @@
       return targets;
     }
 
-    function buildExportTerms(onlyWithTarget) {
+    function buildExportTerms(onlyWithTarget, onlySelected = false) {
       const targets = collectTargets();
       const terms = [];
       
       candidates.forEach((c, i) => {
         const target = targets[String(i)] || '';
         if (onlyWithTarget && !target) return;
+        if (onlySelected && !selectedIndices.has(i)) return;
         
         terms.push({
           source: c.source,
@@ -470,24 +1027,47 @@
     document.getElementById('btnExport').onclick = () => {
       if (!candidates.length) return alert('请先识别术语');
       
-      const terms = buildExportTerms(true);
-      if (terms.length === 0) {
-        if (!confirm('您还没有填写任何 Target，将导出空的 Source 列表。是否继续？')) return;
+      // 优先导出已勾选的
+      if (selectedIndices.size > 0) {
+        const terms = buildExportTerms(false, true);
+        if (terms.length === 0) {
+          alert('没有选中的术语可以导出');
+          return;
+        }
+        exportTermsToExcelV2(terms, 'candidate_terms.xlsx');
+        statusIdentify.className = 'status ok';
+        statusIdentify.textContent = `已导出 ${terms.length} 条选中术语`;
+      } else {
+        // 如果没有勾选，导出所有填写了 Target 的
+        const terms = buildExportTerms(true);
+        if (terms.length === 0) {
+          if (!confirm('您还没有填写任何 Target，将导出空的 Source 列表。是否继续？')) return;
+        }
+        exportTermsToExcelV2(terms, 'candidate_terms.xlsx');
+        statusIdentify.className = 'status ok';
+        statusIdentify.textContent = `已导出 ${terms.length} 条术语`;
       }
-      
-      exportTermsToExcelV2(terms, 'candidate_terms.xlsx');
-      statusIdentify.className = 'status ok';
-      statusIdentify.textContent = `已导出 ${terms.length} 条术语`;
     };
 
     document.getElementById('btnExportAll').onclick = () => {
       if (!candidates.length) return alert('请先识别术语');
       
-      const terms = buildExportTerms(false);
-      exportTermsToExcelV2(terms, 'candidate_terms.xlsx');
+      // 如果有勾选，导出勾选的；否则导出全部
+      const onlySelected = selectedIndices.size > 0;
+      const terms = buildExportTerms(false, onlySelected);
+      if (terms.length === 0) {
+        alert(onlySelected ? '没有选中的术语可以导出' : '没有可导出的术语');
+        return;
+      }
+      
+      const filename = onlySelected ? 'candidate_terms_selected.xlsx' : 'candidate_terms_all.xlsx';
+      exportTermsToExcelV2(terms, filename);
       statusIdentify.className = 'status ok';
-      statusIdentify.textContent = `已导出全部 ${terms.length} 条候选术语`;
+      statusIdentify.textContent = `已导出 ${terms.length} 条${onlySelected ? '选中' : '全部'}候选术语`;
     };
+
+    // 初始化
+    updateSelectedCount();
   </script>
 </body>
 </html>
