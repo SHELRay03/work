@@ -691,3 +691,100 @@ button.btn-secondary:hover:not(:disabled) {
 .card-desc b {
   color: var(--mint-deep);
 }
+
+/* 题材选择下拉 */
+.scene-select {
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.85);
+  font-family: inherit;
+  font-size: 0.86rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.scene-select:focus {
+  outline: none;
+  border-color: var(--mint);
+  box-shadow: 0 0 0 2px var(--mint-glow);
+}
+
+/* 类别徽章 */
+.cat-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.cat-badge.cat-person {
+  background: linear-gradient(135deg, #e6f7ef, #c2ecd9);
+  color: #1e6b4a;
+  border: 1px solid #8fd4b3;
+}
+
+.cat-badge.cat-role {
+  background: linear-gradient(135deg, #fff3e6, #ffe0b8);
+  color: #8b5a1a;
+  border: 1px solid #f0b874;
+}
+
+.cat-badge.cat-place {
+  background: linear-gradient(135deg, #e6f0ff, #c5dbff);
+  color: #1a3d7a;
+  border: 1px solid #94b8f0;
+}
+
+.cat-badge.cat-other {
+  background: linear-gradient(135deg, #f0f0f0, #dcdcdc);
+  color: #555;
+  border: 1px solid #bbb;
+}
+
+/* 识别方式标签 */
+.detect-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  background: rgba(47, 143, 110, 0.1);
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* 上下文样本 */
+.ctx-sample {
+  display: inline-block;
+  padding: 2px 6px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: help;
+}
+
+/* 结果摘要 */
+.compare-summary {
+  margin: 0.75rem 0 0.5rem;
+  font-size: 0.88rem;
+  color: var(--text-muted);
+  line-height: 1.8;
+}
+
+.compare-summary b {
+  color: var(--mint-deep);
+}
+
+/* 识别完成状态 */
+.status:empty { display: block; }

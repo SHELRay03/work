@@ -9,6 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
@@ -29,9 +30,9 @@
     <p class="page-sub">上传中文字幕文件夹，自动识别人物指代变体与需人工翻译的专有词</p>
 
     <section class="panel">
-      <div class="panel-head"><span class="panel-dot"></span><h2>1. 上传字幕</h2></div>
+      <div class="panel-head"><span class="panel-dot"></span><h2>1. 上传与配置</h2></div>
       <p class="card-desc">
-        拖入整个文件夹（包含多集SRT），或选择单个ZIP压缩包。系统将自动扫描高频短语，识别 <b>人物指代变体</b>（如"云知意"→"知意"）和 <b>专有名词</b>（需人工翻译的古代用词、官职名等）。
+        拖入整个文件夹（包含多集SRT），或选择单个ZIP压缩包。使用 <b>称谓前后缀启发式</b> 主动捕获人物名称，使用 <b>最大匹配去重</b> 消除子串污染，并通过 <b>上下文触发词</b> 区别人名、官职与地名。
       </p>
       <div class="field">
         <label>字幕（ZIP 压缩包 或 直接拖入文件夹）</label>
@@ -45,10 +46,17 @@
         </div>
       </div>
       <div class="opts">
-        <label><input type="number" id="minFreq" min="1" max="100" value="2" style="width:5rem" /> 最小出现频率</label>
-        <label><input type="number" id="minLen" min="2" max="4" value="2" style="width:5rem" /> 最小词长</label>
-        <label><input type="number" id="maxLen" min="2" max="6" value="4" style="width:5rem" /> 最大词长</label>
-        <label><input type="number" id="maxItems" min="10" max="500" value="100" style="width:5rem" /> 最多显示</label>
+        <label>题材：
+          <select id="sceneSelect" class="scene-select">
+            <option value="ancient">古装/古代</option>
+            <option value="modern">现代/都市</option>
+            <option value="scifi">科幻/未来</option>
+            <option value="general">通用</option>
+          </select>
+        </label>
+        <label><input type="checkbox" id="classifyContext" checked /> 上下文分类</label>
+        <label><input type="number" id="minFreq" min="1" max="100" value="2" style="width:4.5rem" /> 最小频率</label>
+        <label><input type="number" id="maxItems" min="10" max="500" value="100" style="width:4.5rem" /> 最多显示</label>
       </div>
       <div class="actions">
         <button type="button" id="btnIdentify">开始识别</button>
@@ -60,44 +68,106 @@
       <div class="panel-head"><span class="panel-dot"></span><h2>2. 识别结果</h2></div>
       <p class="compare-summary" id="resultSummary"></p>
       
-      <div class="result-tabs">
-        <button type="button" class="tab-btn active" data-tab="variants">人物指代变体</button>
-        <button type="button" class="tab-btn" data-tab="proper">专有名词</button>
+      <div class="result-tabs" id="resultTabs">
+        <button type="button" class="tab-btn active" data-tab="all">全部</button>
+        <button type="button" class="tab-btn" data-tab="person">疑似人名</button>
+        <button type="button" class="tab-btn" data-tab="role">疑似官职</button>
+        <button type="button" class="tab-btn" data-tab="place">疑似地名</button>
+        <button type="button" class="tab-btn" data-tab="other">其他术语</button>
       </div>
 
-      <div id="variantsTab" class="tab-content">
-        <p class="hint">以下是系统识别出的 <b>同一人物的不同称呼/简称</b>。长词作为主术语（Source），短词是其变体。建议为同一个人物填写统一的 Target（英文名或保留原名）。</p>
+      <div id="allTab" class="tab-content">
         <div class="diff-table-wrap">
           <table class="diff-table">
             <thead>
               <tr>
                 <th>#</th>
-                <th>Source（主术语）</th>
+                <th>Source</th>
                 <th>Target</th>
-                <th>变体</th>
+                <th>类别</th>
+                <th>识别方式</th>
                 <th>频率</th>
-                <th>跨集数</th>
+                <th>跨集</th>
+                <th>上下文</th>
               </tr>
             </thead>
-            <tbody id="variantsBody"></tbody>
+            <tbody id="allBody"></tbody>
           </table>
         </div>
       </div>
 
-      <div id="properTab" class="tab-content" hidden>
-        <p class="hint">以下是跨多集高频出现、不属于常用词的 <b>专有名词/特殊词汇</b>（如古代用词、官职名、地名等）。建议人工翻译后填入 Target 列。</p>
+      <div id="personTab" class="tab-content" hidden>
+        <p class="hint">以下为通过 <b>称谓启发式</b> 或 <b>上下文判断</b> 识别的疑似人名。建议同一人物统一翻译。</p>
         <div class="diff-table-wrap">
           <table class="diff-table">
             <thead>
               <tr>
                 <th>#</th>
-                <th>Source（术语）</th>
+                <th>Source</th>
                 <th>Target</th>
+                <th>识别方式</th>
                 <th>频率</th>
-                <th>跨集数</th>
+                <th>上下文</th>
               </tr>
             </thead>
-            <tbody id="properBody"></tbody>
+            <tbody id="personBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="roleTab" class="tab-content" hidden>
+        <p class="hint">以下为疑似 <b>官职/称谓</b> 的术语，通常在古代/历史剧中需要特殊翻译。</p>
+        <div class="diff-table-wrap">
+          <table class="diff-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Source</th>
+                <th>Target</th>
+                <th>识别方式</th>
+                <th>频率</th>
+                <th>上下文</th>
+              </tr>
+            </thead>
+            <tbody id="roleBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="placeTab" class="tab-content" hidden>
+        <p class="hint">以下为疑似 <b>地名/建筑名</b> 的术语。</p>
+        <div class="diff-table-wrap">
+          <table class="diff-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Source</th>
+                <th>Target</th>
+                <th>识别方式</th>
+                <th>频率</th>
+                <th>上下文</th>
+              </tr>
+            </thead>
+            <tbody id="placeBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="otherTab" class="tab-content" hidden>
+        <p class="hint">以下为高频出现但无法自动归类的 <b>其他专有名词</b>，建议人工甄别。</p>
+        <div class="diff-table-wrap">
+          <table class="diff-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Source</th>
+                <th>Target</th>
+                <th>识别方式</th>
+                <th>频率</th>
+                <th>上下文</th>
+              </tr>
+            </thead>
+            <tbody id="otherBody"></tbody>
           </table>
         </div>
       </div>
@@ -108,13 +178,13 @@
       </div>
     </section>
   </main>
-  <script src="srt.js?v=4"></script>
+  <script src="srt.js?v=5"></script>
   <script>
     let sourceType = null;
     let subtitleFiles = [];
     let droppedSrtFiles = [];
-    let candidates = null;
-    let maxItemsLimit = 100;
+    let candidates = [];
+    let fullResult = null;
 
     const subsIdentifyZip = document.getElementById('subsIdentifyZip');
     const subsIdentifyFolder = document.getElementById('subsIdentifyFolder');
@@ -173,7 +243,6 @@
       }
     });
 
-    // 加载字幕文件
     async function loadSubtitleFiles() {
       subtitleFiles = [];
       
@@ -207,7 +276,6 @@
       }
     }
 
-    // 识别按钮
     document.getElementById('btnIdentify').onclick = async () => {
       if (!sourceType) return alert('请上传或拖入字幕（ZIP / 文件夹）');
       
@@ -218,142 +286,136 @@
       try {
         await loadSubtitleFiles();
         
-        statusIdentify.textContent = `分析 ${subtitleFiles.length} 个文件中的高频短语…`;
-        
-        // 使用自定义参数构建候选
+        const scene = document.getElementById('sceneSelect').value;
         const minFreq = parseInt(document.getElementById('minFreq').value) || 2;
-        const minLen = parseInt(document.getElementById('minLen').value) || 2;
-        const maxLen = parseInt(document.getElementById('maxLen').value) || 4;
-        maxItemsLimit = parseInt(document.getElementById('maxItems').value) || 100;
+        const maxItems = parseInt(document.getElementById('maxItems').value) || 100;
+        const doClassify = document.getElementById('classifyContext').checked;
         
-        // 解析所有字幕提取文本
-        const texts = [];
-        for (const file of subtitleFiles) {
-          const subs = parseSrt(file.content);
-          for (const sub of subs) {
-            if (sub.text && sub.text.trim()) {
-              texts.push({ text: sub.text.replace(/\n/g, ''), file: file.name });
-            }
-          }
-        }
+        statusIdentify.textContent = `加载停用词表（${scene}）…`;
         
-        statusIdentify.textContent = '提取高频短语中…';
+        fullResult = await buildTermCandidatesV2(subtitleFiles, {
+          scene: scene,
+          minFreq: minFreq,
+          minLen: 2,
+          maxLen: 4,
+          maxItems: maxItems,
+          classifyContext: doClassify
+        });
         
-        // 提取n-gram
-        const phraseFreq = extractNgrams(texts, minLen, maxLen);
+        candidates = fullResult.candidates;
         
-        // 调整最小频率
-        const filteredFreq = new Map();
-        for (const [phrase, info] of phraseFreq) {
-          if (info.count >= minFreq) {
-            filteredFreq.set(phrase, info);
-          }
-        }
-        
-        statusIdentify.textContent = '识别人物指代变体…';
-        
-        // 人物变体
-        const variants = detectPersonVariants(filteredFreq);
-        
-        const variantSet = new Set();
-        for (const v of variants) {
-          variantSet.add(v.full);
-          variantSet.add(v.short);
-        }
-        
-        statusIdentify.textContent = '识别专有名词…';
-        
-        // 专有名词
-        const properNouns = detectProperNouns(filteredFreq, variantSet);
-        
-        // 限制数量
-        const limitedVariants = variants.slice(0, maxItemsLimit);
-        const limitedProper = properNouns.slice(0, maxItemsLimit);
-        
-        // 合并
-        const allTerms = [
-          ...limitedVariants.map(v => ({
-            source: v.full,
-            target: '',
-            category: '人物指代',
-            frequency: v.fullCount,
-            fileCount: v.files.size,
-            note: `包含变体：${v.short}（${v.shortCount}次）`
-          })),
-          ...limitedProper.map(n => ({
-            source: n.phrase,
-            target: '',
-            category: '专有名词',
-            frequency: n.count,
-            fileCount: n.files.size,
-            note: ''
-          }))
-        ];
-        
-        candidates = { variants: limitedVariants, properNouns: limitedProper, allTerms };
-        
-        // 渲染结果
-        renderVariants(limitedVariants);
-        renderProperNouns(limitedProper);
+        // 渲染所有分类
+        renderAll(candidates);
+        renderByCategory(candidates, 'person', 'personBody');
+        renderByCategory(candidates, 'role', 'roleBody');
+        renderByCategory(candidates, 'place', 'placeBody');
+        renderByCategory(candidates, 'other', 'otherBody');
         
         const resultPanel = document.getElementById('resultPanel');
         resultPanel.hidden = false;
-        document.getElementById('resultSummary').textContent = 
-          `识别完成：${variants.length} 个人物指代变体，${properNouns.length} 个专有名词。当前显示 ${limitedVariants.length + limitedProper.length} 项。`;
+        
+        // 统计各类数量
+        const counts = { person: 0, role: 0, place: 0, other: 0 };
+        for (const c of candidates) {
+          const ct = c.category;
+          if (ct.includes('人') || c.contextType === 'person') counts.person++;
+          else if (ct.includes('官职') || ct.contextType === 'role') counts.role++;
+          else if (ct.includes('地名') || c.contextType === 'place') counts.place++;
+          else counts.other++;
+        }
+        
+        document.getElementById('resultSummary').innerHTML = 
+          `识别完成：共 <b>${candidates.length}</b> 条候选 ` +
+          `| 人名 <b>${counts.person}</b> ` +
+          `| 官职 <b>${counts.role}</b> ` +
+          `| 地名 <b>${counts.place}</b> ` +
+          `| 其他 <b>${counts.other}</b> ` +
+          `<br>去重抑制：${fullResult.suppressedCount} 个冗余子串 | 称谓规则识别：${fullResult.nameCandidateCount} 个姓名候选`;
         
         statusIdentify.className = 'status ok';
-        statusIdentify.textContent = `识别完成！共发现 ${variants.length + properNouns.length} 个候选术语`;
+        statusIdentify.textContent = `识别完成！共 ${candidates.length} 个候选术语（已抑制 ${fullResult.suppressedCount} 个冗余子串）`;
         
       } catch (e) {
         statusIdentify.className = 'status err';
         statusIdentify.textContent = e.message;
+        console.error(e);
       } finally {
         document.getElementById('btnIdentify').disabled = false;
       }
     };
 
-    // 渲染人物变体表格
-    function renderVariants(variants) {
-      const body = document.getElementById('variantsBody');
+    function categoryClass(cat) {
+      if (cat.includes('人') || cat === '疑似人名') return 'cat-person';
+      if (cat.includes('官职') || cat === '疑似官职/称谓') return 'cat-role';
+      if (cat.includes('地名') || cat === '疑似地名') return 'cat-place';
+      return 'cat-other';
+    }
+
+    function renderAll(list) {
+      const body = document.getElementById('allBody');
       body.innerHTML = '';
       
-      if (variants.length === 0) {
-        body.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#999;padding:1rem">未识别到人物指代变体</td></tr>';
+      if (list.length === 0) {
+        body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#999;padding:1rem">未识别到术语</td></tr>';
         return;
       }
       
-      variants.forEach((v, i) => {
+      list.forEach((c, i) => {
         const tr = document.createElement('tr');
+        const sampleCtx = c.sampleContexts && c.sampleContexts.length > 0 
+          ? `<span class="ctx-sample" title="${c.sampleContexts[0].file}">${c.sampleContexts[0].context.substring(0, 30)}...</span>`
+          : '-';
         tr.innerHTML = `
           <td>${i + 1}</td>
-          <td><strong style="color:var(--mint-deep)">${v.full}</strong></td>
-          <td><input type="text" class="target-input" data-idx="${i}" data-type="variant" value="" placeholder="填写Target..."/></td>
-          <td><span class="variant-tag">${v.short}</span></td>
-          <td>${v.fullCount}</td>
-          <td>${v.files.size}</td>
+          <td><strong style="color:var(--mint-deep)">${c.source}</strong></td>
+          <td><input type="text" class="target-input" data-idx="${i}" data-field="target" value="" placeholder="填写..." /></td>
+          <td><span class="cat-badge ${categoryClass(c.category)}">${c.category}</span></td>
+          <td><span class="detect-tag">${c.detectedBy || ''}</span></td>
+          <td>${c.frequency}</td>
+          <td>${c.fileCount}</td>
+          <td>${sampleCtx}</td>
         `;
         body.appendChild(tr);
       });
     }
 
-    // 渲染专有名词表格
-    function renderProperNouns(nouns) {
-      const body = document.getElementById('properBody');
+    function renderByCategory(list, filter, bodyId) {
+      const body = document.getElementById(bodyId);
       body.innerHTML = '';
       
-      if (nouns.length === 0) {
-        body.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#999;padding:1rem">未识别到专有名词</td></tr>';
+      let filtered = [];
+      if (filter === 'other') {
+        filtered = list.filter(c => {
+          const ct = c.category;
+          return !ct.includes('人') && !ct.includes('官职') && !ct.includes('地名');
+        });
+      } else {
+        filtered = list.filter(c => {
+          const ct = c.category;
+          return (filter === 'person' && (ct.includes('人') || c.contextType === 'person')) ||
+                 (filter === 'role' && (ct.includes('官职') || c.contextType === 'role')) ||
+                 (filter === 'place' && (ct.includes('地名') || c.contextType === 'place'));
+        });
+      }
+      
+      if (filtered.length === 0) {
+        body.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#999;padding:1rem">暂无此类术语</td></tr>`;
         return;
       }
       
-      nouns.forEach((n, i) => {
+      filtered.forEach((c, i) => {
+        const globalIdx = list.indexOf(c);
         const tr = document.createElement('tr');
+        const sampleCtx = c.sampleContexts && c.sampleContexts.length > 0 
+          ? `<span class="ctx-sample" title="${c.sampleContexts[0].file}">${c.sampleContexts[0].context.substring(0, 40)}</span>`
+          : '-';
         tr.innerHTML = `
           <td>${i + 1}</td>
-          <td><strong style="color:var(--mint-deep)">${n.phrase}</strong></td>
-          <td><input type="text" class="target-input" data-idx="${i}" data-type="proper" value="" placeholder="填写Target..."/></td>
-          <td>${n.count}</td>
-          <td>${n.files.size}</td>
+          <td><strong style="color:var(--mint-deep)">${c.source}</strong></td>
+          <td><input type="text" class="target-input" data-idx="${globalIdx}" data-field="target" value="" placeholder="填写..." /></td>
+          <td><span class="detect-tag">${c.detectedBy || ''}</span></td>
+          <td>${c.frequency}</td>
+          <td>${sampleCtx}</td>
         `;
         body.appendChild(tr);
       });
@@ -370,92 +432,59 @@
       });
     });
 
-    // 收集用户填写的Target
     function collectTargets() {
       const inputs = document.querySelectorAll('.target-input');
       const targets = {};
       inputs.forEach(input => {
         const idx = input.dataset.idx;
-        const type = input.dataset.type;
-        targets[`${type}_${idx}`] = input.value.trim();
+        if (!targets[idx] || !targets[idx].trim()) {
+          targets[idx] = input.value.trim();
+        }
       });
       return targets;
     }
 
-    // 导出Excel（带用户填写的Target）
-    document.getElementById('btnExport').onclick = () => {
-      if (!candidates) return alert('请先识别术语');
-      
+    function buildExportTerms(onlyWithTarget) {
       const targets = collectTargets();
-      
       const terms = [];
       
-      // 人物变体
-      candidates.variants.forEach((v, i) => {
+      candidates.forEach((c, i) => {
+        const target = targets[String(i)] || '';
+        if (onlyWithTarget && !target) return;
+        
         terms.push({
-          source: v.full,
-          target: targets[`variant_${i}`] || '',
-          category: '人物指代',
-          frequency: v.fullCount,
-          fileCount: v.files.size,
-          note: `包含变体：${v.short}（${v.shortCount}次）`
+          source: c.source,
+          target: target,
+          category: c.category,
+          frequency: c.frequency,
+          fileCount: c.fileCount,
+          detection: c.detectedBy || '',
+          context: c.classificationDetail || '',
+          note: c.note || ''
         });
       });
       
-      // 专有名词
-      candidates.properNouns.forEach((n, i) => {
-        terms.push({
-          source: n.phrase,
-          target: targets[`proper_${i}`] || '',
-          category: '专有名词',
-          frequency: n.count,
-          fileCount: n.files.size,
-          note: ''
-        });
-      });
+      return terms;
+    }
+
+    document.getElementById('btnExport').onclick = () => {
+      if (!candidates.length) return alert('请先识别术语');
       
-      // 过滤出有Target的
-      const filtered = terms.filter(t => t.target);
-      if (filtered.length === 0) {
+      const terms = buildExportTerms(true);
+      if (terms.length === 0) {
         if (!confirm('您还没有填写任何 Target，将导出空的 Source 列表。是否继续？')) return;
       }
       
-      exportTermsToExcel(terms, 'candidate_terms.xlsx');
+      exportTermsToExcelV2(terms, 'candidate_terms.xlsx');
       statusIdentify.className = 'status ok';
       statusIdentify.textContent = `已导出 ${terms.length} 条术语`;
     };
 
-    // 导出全部候选（无过滤）
     document.getElementById('btnExportAll').onclick = () => {
-      if (!candidates) return alert('请先识别术语');
+      if (!candidates.length) return alert('请先识别术语');
       
-      const targets = collectTargets();
-      
-      const terms = [];
-      
-      candidates.variants.forEach((v, i) => {
-        terms.push({
-          source: v.full,
-          target: targets[`variant_${i}`] || '',
-          category: '人物指代',
-          frequency: v.fullCount,
-          fileCount: v.files.size,
-          note: `包含变体：${v.short}（${v.shortCount}次）`
-        });
-      });
-      
-      candidates.properNouns.forEach((n, i) => {
-        terms.push({
-          source: n.phrase,
-          target: targets[`proper_${i}`] || '',
-          category: '专有名词',
-          frequency: n.count,
-          fileCount: n.files.size,
-          note: ''
-        });
-      });
-      
-      exportTermsToExcel(terms, 'candidate_terms.xlsx');
+      const terms = buildExportTerms(false);
+      exportTermsToExcelV2(terms, 'candidate_terms.xlsx');
       statusIdentify.className = 'status ok';
       statusIdentify.textContent = `已导出全部 ${terms.length} 条候选术语`;
     };

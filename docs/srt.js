@@ -693,3 +693,590 @@ async function saveFilesToFolder(fileMap) {
     return { success: false, message: '保存失败：' + err.message };
   }
 }
+
+// ============================================================
+// 术语自动识别引擎（优化版）
+// ============================================================
+
+let stopwordsData = null;
+let activeScene = 'ancient';
+
+async function loadStopwords(sceneName) {
+  if (stopwordsData && stopwordsData.active_scene === sceneName) {
+    return stopwordsData;
+  }
+  try {
+    const resp = await fetch('stopwords.json?v=2');
+    if (!resp.ok) throw new Error('stopwords.json 加载失败');
+    stopwordsData = await resp.json();
+    stopwordsData.active_scene = sceneName || stopwordsData.active_scene;
+    activeScene = stopwordsData.active_scene;
+    return stopwordsData;
+  } catch (e) {
+    console.warn('[术语识别] 无法加载 stopwords.json，使用内置默认停用词');
+    return getDefaultStopwords();
+  }
+}
+
+function getDefaultStopwords() {
+  return {
+    version: '2.0-fallback',
+    groups: {
+      common: {
+        label: '通用停用词',
+        words: ['的', '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一', '一个',
+          '上', '也', '很', '到', '说', '要', '去', '你', '会', '着', '没有', '看',
+          '好', '自己', '这', '他', '她', '它', '我们', '你们', '他们',
+          '什么', '哪里', '谁', '怎么', '大家', '然后', '之后', '之前',
+          '因为', '所以', '但是', '不过', '还是', '那么', '这么', '这样', '那样',
+          '啊', '吧', '呢', '吗', '哦', '呀', '啦', '嗯', '唉',
+          '真的', '确实', '也许', '可能', '应该', '必须', '需要',
+          '非常', '特别', '十分', '比较', '稍微', '有点', '有些',
+          '就是', '只是', '然而', '而且', '或者', '以及', '包括',
+          '知道', '明白', '了解', '觉得', '认为', '告诉', '听说', '看到',
+          '开始', '结束', '继续', '回来', '出去', '进来', '过去', '过来']
+      },
+      variants: {
+        label: '人物称谓变体',
+        prefixes: ['公子', '大人', '陛下', '娘娘', '皇上', '微臣', '奴婢', '奴才', '小', '老'],
+        suffixes: ['大人', '姑娘', '公子', '娘娘', '陛下', '先生', '小姐', '少爷',
+          '夫人', '师傅', '老师', '哥', '姐', '弟', '妹', '爷', '奶']
+      },
+      context_rules: {
+        label: '上下文分类规则',
+        person_triggers: ['道', '说', '笑', '怒', '问', '答', '叹', '曰', '喊', '叫',
+          '看', '望', '盯', '瞥', '点头', '摇头', '上前', '上前一步',
+          '走', '跑', '冲', '退', '站', '坐', '跪', '躺'],
+        role_triggers: ['任', '封', '贬', '升', '免', '罢', '授', '辞', '拜', '转',
+          '出任', '任命', '升任', '贬为', '封为', '罢黜',
+          '官职', '爵位', '官位', '品级'],
+        place_triggers: ['去', '到', '在', '往', '离', '赴', '返', '回',
+          '进京', '入朝', '出城', '入城', '归乡', '返乡']
+      }
+    },
+    scenes: { general: ['common'], ancient: ['common', 'variants', 'context_rules'] },
+    active_scene: 'ancient'
+  };
+}
+
+function getActiveStopwords() {
+  if (!stopwordsData) return getDefaultStopwords();
+  const scene = stopwordsData.active_scene || 'ancient';
+  const sceneGroups = (stopwordsData.scenes && stopwordsData.scenes[scene]) || ['common'];
+  
+  const words = new Set();
+  const prefixes = [];
+  const suffixes = [];
+  const personTriggers = [];
+  const roleTriggers = [];
+  const placeTriggers = [];
+  
+  for (const groupName of sceneGroups) {
+    const group = stopwordsData.groups[groupName];
+    if (!group) continue;
+    
+    if (group.words) {
+      for (const w of group.words) words.add(w);
+    }
+    if (group.prefixes) {
+      for (const p of group.prefixes) prefixes.push(p);
+    }
+    if (group.suffixes) {
+      for (const s of group.suffixes) suffixes.push(s);
+    }
+    if (group.person_triggers) {
+      for (const t of group.person_triggers) personTriggers.push(t);
+    }
+    if (group.role_triggers) {
+      for (const t of group.role_triggers) roleTriggers.push(t);
+    }
+    if (group.place_triggers) {
+      for (const t of group.place_triggers) placeTriggers.push(t);
+    }
+  }
+  
+  return { words, prefixes, suffixes, personTriggers, roleTriggers, placeTriggers };
+}
+
+// ========== 1.1 n-gram 提取 + 最大匹配去重 ==========
+
+/**
+ * 从文本数组中提取 n-gram 短语及频率（带最大匹配去重）
+ * 
+ * 核心策略（来自经验教训）：
+ * - 不使用"包含即否决"的粗粒度子串过滤
+ * - 而是采用"最大匹配优先"原则：长短语被保留，其子串仅在频率显著低于长短语时被视为独立词条
+ * - 使用结构化约束（长度差 + 频率比 + 位置特征）来区分"真子串"和"独立词"
+ */
+function extractNgramsV2(texts, options = {}) {
+  const { minLen = 2, maxLen = 4, minFreq = 2 } = options;
+  const activeStopwords = getActiveStopwords();
+  const stopwordSet = activeStopwords.words;
+  
+  // 第一阶段：提取所有 n-gram 频率
+  const freqMap = new Map();
+  const fileMap = new Map();
+  
+  for (const textEntry of texts) {
+    const { text: rawText, file } = textEntry;
+    const cleaned = rawText.replace(/[\s,.!?;:'"()\[\]{}《》<>—–\-~·@#$%^&*+=|\\\/，。！？；：、（）【】「」『』〈〉—～·]/g, '');
+    
+    for (let len = minLen; len <= maxLen; len++) {
+      for (let i = 0; i <= cleaned.length - len; i++) {
+        const phrase = cleaned.substring(i, i + len);
+        if (/^[0-9a-zA-Z]+$/.test(phrase)) continue;
+        if (stopwordSet.has(phrase)) continue;
+        
+        if (!freqMap.has(phrase)) {
+          freqMap.set(phrase, 0);
+          fileMap.set(phrase, new Set());
+        }
+        freqMap.set(phrase, freqMap.get(phrase) + 1);
+        fileMap.get(phrase).add(file);
+      }
+    }
+  }
+  
+  // 第二阶段：最大匹配去重
+  // 按短语长度降序排列，长短语优先成为"主词条"
+  const allEntries = [...freqMap.entries()]
+    .filter(([, count]) => count >= minFreq)
+    .sort((a, b) => b[0].length - a[0].length || b[1] - a[1]);
+  
+  const mainEntries = new Map();
+  const suppressed = new Set(); // 被长短语抑制的子串
+  
+  for (const [phrase, count] of allEntries) {
+    if (suppressed.has(phrase)) continue;
+    
+    // 检查是否是已收录长短语的子串
+    let isRedundantSubstring = false;
+    
+    for (const [mainPhrase, mainCount] of mainEntries) {
+      if (mainPhrase.includes(phrase) && mainPhrase !== phrase) {
+        // 结构化约束判断：
+        // 1. 子串频率不显著低于长短语（比值 > 0.4 表示子串可能是独立词）
+        const ratio = count / mainCount;
+        
+        // 2. 长度约束：长短语必须比子串长至少1字，且子串长度不能太长
+        const lenDiff = mainPhrase.length - phrase.length;
+        
+        // 3. 位置约束：检查子串是否是长短语的"核心部分"
+        //    例如 "云知意" -> "知意"（核心在尾部） vs "尚书令" -> "书令"（非连续）
+        //    连续子串用 includes 已保证，这里额外检查子串是否只在长短语中出现
+        const onlyInLongPhrase = isSubstringOnlyUsedIn(phrase, mainPhrase, texts);
+        
+        if (lenDiff >= 1) {
+          // 如果子串频率接近长短语（ratio > 0.6），说明子串本身也很常见
+          // 此时不抑制，而是保留两个词条，标记为"可能相关"
+          if (ratio > 0.6 || onlyInLongPhrase === false && ratio > 0.4) {
+            // 保留为独立词条，不抑制
+          } else if (ratio <= 0.4 || onlyInLongPhrase) {
+            // 子串频率明显低或仅出现在长短语中 -> 抑制
+            isRedundantSubstring = true;
+            suppressed.add(phrase);
+            break;
+          }
+        }
+      }
+    }
+    
+    if (!isRedundantSubstring) {
+      mainEntries.set(phrase, {
+        count,
+        files: fileMap.get(phrase),
+        length: phrase.length
+      });
+    }
+  }
+  
+  return { freqMap: mainEntries, suppressed };
+}
+
+/**
+ * 检查短语B是否只作为短语A的子串出现（而非独立出现）
+ * 通过统计包含A的文本 vs 包含B的文本的比例来判断
+ */
+function isSubstringOnlyUsedIn(shortPhrase, longPhrase, texts) {
+  let shortTotalCount = 0;
+  let shortOnlyInLongCount = 0;
+  
+  for (const { text } of texts) {
+    // 去除标点后的文本
+    const cleaned = text.replace(/[\s,.!?;:'"()\[\]{}《》<>—–\-~·@#$%^&*+=|\\\/，。！？；：、（）【】「」『』〈〉—～·]/g, '');
+    
+    // 统计短词出现次数
+    const shortRegex = new RegExp(escapeRegex(shortPhrase), 'g');
+    const shortMatches = cleaned.match(shortRegex);
+    if (!shortMatches) continue;
+    
+    shortTotalCount += shortMatches.length;
+    
+    // 统计短词作为长词子串出现的次数
+    const longRegex = new RegExp(escapeRegex(longPhrase), 'g');
+    const longMatches = cleaned.match(longRegex);
+    const longCount = longMatches ? longMatches.length : 0;
+    
+    // 简单启发式：如果长词出现次数 >= 短词出现次数，短词可能只是子串
+    if (longCount >= shortMatches.length) {
+      shortOnlyInLongCount += shortMatches.length;
+    }
+  }
+  
+  if (shortTotalCount === 0) return false;
+  // 如果超过80%的短词出现都伴随着长词出现，认为短词只是子串
+  return (shortOnlyInLongCount / shortTotalCount) > 0.8;
+}
+
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// ========== 1.2 称谓前后缀启发式规则 ==========
+
+/**
+ * 主动识别"称谓+姓名"模式
+ * 不是被动统计频率，而是用结构化规则主动捕获人物名称
+ * 
+ * 识别类型：
+ * - 前缀型：公子XX、大人XX、微臣XX、陛下XX、老师XX
+ * - 后缀型：XX大人、XX姑娘、XX公子、XX娘娘、XX先生
+ * - 双重型：大人XX先生
+ */
+function detectNameByAffixes(texts, options = {}) {
+  const activeStopwords = getActiveStopwords();
+  const { prefixes = [], suffixes = [] } = activeStopwords;
+  const minNameLen = options.minNameLen || 2;
+  const maxNameLen = options.maxNameLen || 3;
+  
+  const nameCandidates = new Map(); // name -> { count, files, sources: [] }
+  
+  for (const { text: rawText, file } of texts) {
+    const cleaned = rawText.replace(/[\s,.!?;:'"()\[\]{}《》<>—–\-~·@#$%^&*+=|\\\/，。！？；：、（）【】「」『』〈〉—～·]/g, '');
+    
+    // 前缀匹配：prefix + name
+    for (const prefix of prefixes) {
+      const prefixLen = prefix.length;
+      let idx = 0;
+      while (idx < cleaned.length - prefixLen) {
+        const seg = cleaned.substring(idx, idx + prefixLen);
+        if (seg === prefix) {
+          // 尝试提取前缀后的名字
+          for (let nameLen = minNameLen; nameLen <= maxNameLen && idx + prefixLen + nameLen <= cleaned.length; nameLen++) {
+            const name = cleaned.substring(idx + prefixLen, idx + prefixLen + nameLen);
+            // 名字不应以数字/字母开头
+            if (!/^[0-9a-zA-Z]/.test(name) && !activeStopwords.words.has(name)) {
+              addNameCandidate(nameCandidates, name, file, 'prefix:' + prefix);
+            }
+          }
+          // 只移1位，允许重叠匹配
+          idx += 1;
+        } else {
+          idx += 1;
+        }
+      }
+    }
+    
+    // 后缀匹配：name + suffix
+    for (const suffix of suffixes) {
+      const suffixLen = suffix.length;
+      let idx = 0;
+      while (idx < cleaned.length - suffixLen) {
+        const seg = cleaned.substring(idx, idx + suffixLen);
+        if (seg === suffix) {
+          // 尝试提取后缀前的名字
+          for (let nameLen = minNameLen; nameLen <= maxNameLen && idx - nameLen >= 0; nameLen++) {
+            const name = cleaned.substring(idx - nameLen, idx);
+            if (!/^[0-9a-zA-Z]/.test(name) && !activeStopwords.words.has(name)) {
+              // 检查名字不是单纯的停用词组合
+              if (!isPureStopwords(name, activeStopwords.words)) {
+                addNameCandidate(nameCandidates, name, file, 'suffix:' + suffix);
+              }
+            }
+          }
+          idx += 1;
+        } else {
+          idx += 1;
+        }
+      }
+    }
+  }
+  
+  // 过滤：至少出现2次
+  const result = new Map();
+  for (const [name, info] of nameCandidates) {
+    if (info.count >= 2) {
+      result.set(name, info);
+    }
+  }
+  
+  return result;
+}
+
+function addNameCandidate(nameCandidates, name, file, source) {
+  if (!nameCandidates.has(name)) {
+    nameCandidates.set(name, { count: 0, files: new Set(), sources: new Set() });
+  }
+  const info = nameCandidates.get(name);
+  info.count++;
+  info.files.add(file);
+  info.sources.add(source);
+}
+
+function isPureStopwords(name, stopwordSet) {
+  // 名字中每个字都不是独立停用词
+  for (const ch of name) {
+    if (stopwordSet.has(ch)) return true;
+  }
+  return false;
+}
+
+// ========== 1.3 上下文词性区分 ==========
+
+/**
+ * 基于上下文判断短语的语义类型
+ * 
+ * 不做词性标注（无外部依赖），而是用"触发词"启发式规则：
+ * - 短语后紧跟/邻近"道、说、笑"等 -> 高概率人名
+ * - 短语前紧邻"任、封、贬"等 -> 高概率官职
+ * - 短语邻近"去、到、在"+地名后缀 -> 可能地名
+ */
+function classifyByContext(phrase, texts, options = {}) {
+  const activeStopwords = getActiveStopwords();
+  const { personTriggers, roleTriggers, placeTriggers } = activeStopwords;
+  
+  const scores = { person: 0, role: 0, place: 0 };
+  const contextWindows = [];
+  
+  for (const { text: rawText, file } of texts) {
+    // 保留标点的原文用于上下文判断
+    const text = rawText.replace(/\n/g, '');
+    
+    let idx = 0;
+    while (true) {
+      idx = text.indexOf(phrase, idx);
+      if (idx === -1) break;
+      
+      // 提取短语前后各10字的上下文窗口
+      const beforeStart = Math.max(0, idx - 10);
+      const afterEnd = Math.min(text.length, idx + phrase.length + 10);
+      const before = text.substring(beforeStart, idx);
+      const after = text.substring(idx + phrase.length, afterEnd);
+      
+      contextWindows.push({ before, after, file, position: idx });
+      
+      // 人名触发：后文是否包含"道/说/笑/怒"等对话/动作动词
+      for (const trigger of personTriggers) {
+        if (after.includes(trigger)) {
+          scores.person += 2;
+          break;
+        }
+      }
+      // 补充：前面有"对/向/跟"等介词 + 人名
+      if (/[对向跟给替为朝]/.test(before)) {
+        scores.person += 1;
+      }
+      
+      // 官职触发：前文是否有"任/封/贬/升"等任命动词
+      for (const trigger of roleTriggers) {
+        if (before.includes(trigger)) {
+          scores.role += 3;
+          break;
+        }
+      }
+      
+      // 地名触发：后文有"去/到/在"或前文有"去/到/赴"
+      for (const trigger of placeTriggers) {
+        if (after.startsWith(trigger) || before.endsWith(trigger)) {
+          scores.place += 2;
+          break;
+        }
+      }
+      // 地名启发：以"殿/宫/城/府/州/阁/堂"等结尾
+      if (/[殿宫城府州阁堂院所部省郡县国邦]$/.test(phrase)) {
+        scores.place += 3;
+      }
+      // 官职启发：以"令/尉/卿/相/侯/伯/子/男/使/者"等结尾
+      if (/[令尉卿相侯伯子男使者]$/.test(phrase)) {
+        scores.role += 2;
+      }
+      
+      idx += phrase.length;
+    }
+  }
+  
+  // 判定类型
+  const maxScore = Math.max(scores.person, scores.role, scores.place);
+  let type = 'unknown';
+  if (maxScore === 0) {
+    type = 'unknown';
+  } else if (scores.person > scores.role && scores.person > scores.place) {
+    type = 'person';
+  } else if (scores.role > scores.person && scores.role > scores.place) {
+    type = 'role';
+  } else if (scores.place > scores.person && scores.place > scores.role) {
+    type = 'place';
+  } else if (scores.person === maxScore && scores.person > 0) {
+    type = 'person';
+  } else {
+    type = 'ambiguous';
+  }
+  
+  return {
+    type,
+    scores,
+    contextCount: contextWindows.length,
+    sampleContexts: contextWindows.slice(0, 3).map(w => ({
+      file: w.file,
+      context: w.before + '【' + phrase + '】' + w.after
+    }))
+  };
+}
+
+// ========== 整合：构建候选术语 ==========
+
+/**
+ * 全流程构建候选术语
+ * @param {Array<{name: string, content: string}>} subtitleFiles
+ * @param {Object} options - { scene, minFreq, minLen, maxLen, maxItems, classifyContext }
+ */
+async function buildTermCandidatesV2(subtitleFiles, options = {}) {
+  const {
+    scene = 'ancient',
+    minFreq = 2,
+    minLen = 2,
+    maxLen = 4,
+    maxItems = 100,
+    classifyContext = true
+  } = options;
+  
+  // 1. 加载停用词
+  await loadStopwords(scene);
+  
+  // 2. 解析所有字幕，提取文本
+  const texts = [];
+  for (const file of subtitleFiles) {
+    const subs = parseSrt(file.content);
+    for (const sub of subs) {
+      if (sub.text && sub.text.trim()) {
+        texts.push({ text: sub.text.replace(/\n/g, ''), file: file.name });
+      }
+    }
+  }
+  
+  // 3. n-gram 提取 + 最大匹配去重
+  const { freqMap, suppressed } = extractNgramsV2(texts, { minLen, maxLen, minFreq });
+  
+  // 4. 称谓启发式识别
+  const nameCandidates = detectNameByAffixes(texts, { minNameLen: 2, maxNameLen: 3 });
+  
+  // 5. 合并候选
+  const candidateMap = new Map();
+  
+  // 5a. 称谓识别的人名 -> 高优先级候选
+  for (const [name, info] of nameCandidates) {
+    if (!candidateMap.has(name)) {
+      candidateMap.set(name, {
+        source: name,
+        frequency: info.count,
+        fileCount: info.files.size,
+        category: '人物指代',
+        detectedBy: '称谓规则',
+        note: '称谓启发式：' + [...info.sources].join(', ')
+      });
+    }
+  }
+  
+  // 5b. n-gram 候选 -> 补充/合并
+  for (const [phrase, info] of freqMap) {
+    if (candidateMap.has(phrase)) {
+      // 已是称谓识别的人名，更新信息
+      const existing = candidateMap.get(phrase);
+      existing.frequency = Math.max(existing.frequency, info.count);
+      existing.fileCount = Math.max(existing.fileCount, info.files.size);
+    } else {
+      candidateMap.set(phrase, {
+        source: phrase,
+        frequency: info.count,
+        fileCount: info.files.size,
+        category: '待分类',
+        detectedBy: 'n-gram 高频',
+        note: ''
+      });
+    }
+  }
+  
+  // 6. 上下文分类（可选）
+  if (classifyContext) {
+    const candidateEntries = [...candidateMap.values()];
+    for (const candidate of candidateEntries) {
+      const classification = classifyByContext(candidate.source, texts);
+      candidate.contextType = classification.type;
+      candidate.contextScores = classification.scores;
+      candidate.sampleContexts = classification.sampleContexts;
+      
+      // 根据上下文调整类别
+      if (candidate.category === '待分类') {
+        if (classification.type === 'person') {
+          candidate.category = '疑似人名';
+        } else if (classification.type === 'role') {
+          candidate.category = '疑似官职/称谓';
+        } else if (classification.type === 'place') {
+          candidate.category = '疑似地名';
+        } else {
+          candidate.category = '专有名词';
+        }
+      }
+      
+      candidate.classificationDetail = `人:${classification.scores.person} 职:${classification.scores.role} 地:${classification.scores.place}`;
+    }
+  }
+  
+  // 7. 排序 + 限制
+  const result = [...candidateMap.values()].sort((a, b) => {
+    // 人物指代优先
+    if (a.category.startsWith('人物') && !b.category.startsWith('人物')) return -1;
+    if (!a.category.startsWith('人物') && b.category.startsWith('人物')) return 1;
+    // 按频率降序
+    return b.frequency - a.frequency;
+  }).slice(0, maxItems);
+  
+  return {
+    candidates: result,
+    suppressedCount: suppressed.size,
+    nameCandidateCount: nameCandidates.size,
+    totalNgramCandidates: freqMap.size
+  };
+}
+
+// ========== 导出工具 ==========
+
+function exportTermsToExcelV2(candidates, filename = 'candidate_terms.xlsx') {
+  if (!window.XLSX) {
+    throw new Error('需要先加载 SheetJS (xlsx) 库');
+  }
+  
+  const rows = [
+    ['Source', 'Target', 'Category', 'Frequency', 'File Count', 'Detection', 'Context', 'Note'],
+    ...candidates.map(t => [
+      t.source,
+      t.target || '',
+      t.category,
+      t.frequency,
+      t.fileCount,
+      t.detectedBy || '',
+      t.classificationDetail || '',
+      t.note || ''
+    ])
+  ];
+  
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [
+    { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 8 },
+    { wch: 8 }, { wch: 14 }, { wch: 18 }, { wch: 30 }
+  ];
+  
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Candidate Terms');
+  XLSX.writeFile(wb, filename);
+}
