@@ -61,6 +61,11 @@
           <div class="scan-toolbar">
             <label><input type="checkbox" id="chkTermAll" checked /> 本词全选</label>
             <label><input type="checkbox" id="chkGlobalAll" checked /> 全部全选</label>
+            <span id="targetSelectorWrap" class="target-selector-wrap" hidden>
+              <label>替换为：
+                <select id="targetSelect" class="target-select"></select>
+              </label>
+            </span>
           </div>
           <div class="diff-table-wrap">
             <table class="diff-table">
@@ -86,6 +91,19 @@
         <label><input type="checkbox" id="preview" /> 预览（仅第一集）</label>
         <label><input type="checkbox" id="alsoFix" checked /> 替换后 SRT 规范化</label>
         <label><input type="checkbox" id="exportFolder" /> 导出为文件夹（需 Chrome/Edge）</label>
+        <label>输出后缀：
+          <select id="langSuffix" class="scene-select">
+            <option value="">不添加</option>
+            <option value=".zh_cn">.zh_cn（简体中文）</option>
+            <option value=".en">.en（英语）</option>
+            <option value=".ja">.ja（日语）</option>
+            <option value=".es">.es（西班牙语）</option>
+            <option value=".ko">.ko（韩语）</option>
+            <option value=".de">.de（德语）</option>
+            <option value=".fr">.fr（法语）</option>
+            <option value=".th">.th（泰语）</option>
+          </select>
+        </label>
       </div>
       <div class="actions">
         <button type="button" id="btnReplace">按勾选开始替换</button>
@@ -102,6 +120,8 @@
     let subtitleFiles = [];
     let sourceType = null; // 'zip' | 'folder' | 'drop'
     let droppedSrtFiles = []; // files from drag-drop
+    let multiTargetMap = {}; // source -> [target1, target2, ...]
+    let selectedTargets = {}; // source -> user-selected target
 
     const SOURCE_ALIASES = ['source', '中文', '原文', '源文', '词条', '术语', 'chinese', 'zh', '中文词条', '中文原文', '源'];
     const TARGET_ALIASES = ['target', '译文', '英文', '目标语', '翻译', 'english', 'en', '外语', '外文', '英文译名', '译名', '替换', '替换为', '替换内容', '目标文本', '目标'];
@@ -179,7 +199,7 @@
       const arrayBuffer = await file.arrayBuffer();
       const data = new Uint8Array(arrayBuffer);
       const workbook = XLSX.read(data, { type: 'array' });
-      
+
       let targetSheet = null;
       for (const sheetName of workbook.SheetNames) {
         const sheet = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
@@ -190,26 +210,27 @@
           break;
         }
       }
-      
+
       if (!targetSheet) {
         throw new Error('未找到 Source 和 Target 列，请检查术语表格式');
       }
-      
+
       const entries = [];
+      const sourceTargetMap = {}; // source -> Set of targets
       const { data: sheet, sourceCol, targetCol } = targetSheet;
-      
+
       for (let rowIdx = 1; rowIdx < sheet.length; rowIdx++) {
         const row = sheet[rowIdx];
         if (!row || !row[sourceCol]) continue;
-        
+
         const source = String(row[sourceCol]).trim();
         const target = String(row[targetCol] || '').trim();
-        
+
         if (!source) continue;
         if (!target) continue;
-        
+
         const parts = source.split(/[/\\]+/).map(p => p.trim()).filter(p => p);
-        
+
         for (const part of parts) {
           entries.push({
             source: part,
@@ -218,10 +239,30 @@
             matchType: 'phrase',
             blockIfLonger: true
           });
+          if (!sourceTargetMap[part]) sourceTargetMap[part] = new Set();
+          sourceTargetMap[part].add(target);
         }
       }
-      
-      return { entries, sheetName: targetSheet.name };
+
+      // 检测同一 Source 有多个不同 Target 的情况
+      const multiTargetMap = {};
+      for (const [src, targets] of Object.entries(sourceTargetMap)) {
+        if (targets.size > 1) {
+          multiTargetMap[src] = [...targets];
+        }
+      }
+
+      // 去重：同一 Source 只保留第一条词条（Target 由用户选择覆盖）
+      const seenSources = new Set();
+      const dedupedEntries = [];
+      for (const entry of entries) {
+        if (!seenSources.has(entry.source)) {
+          seenSources.add(entry.source);
+          dedupedEntries.push(entry);
+        }
+      }
+
+      return { entries: dedupedEntries, sheetName: targetSheet.name, multiTargetMap };
     }
 
     function esc(s) {
@@ -240,16 +281,48 @@
         const b = document.createElement('button');
         b.type = 'button';
         b.className = 'term-item' + (t.source === activeSource ? ' active' : '');
-        b.innerHTML = esc(t.source) + ` <span class="cnt">${t.hits.length}</span>`;
-        b.onclick = () => { activeSource = t.source; renderTermList(); renderHits(); };
+        const multiBadge = multiTargetMap[t.source]
+          ? ` <span class="multi-badge" title="该词有 ${multiTargetMap[t.source].length} 个可选 Target">多</span>`
+          : '';
+        b.innerHTML = esc(t.source) + multiBadge + ` <span class="cnt">${t.hits.length}</span>`;
+        b.onclick = () => { activeSource = t.source; renderTermList(); renderHits(); updateTargetSelector(); };
         termList.appendChild(b);
       });
     }
+
+    function updateTargetSelector() {
+      const wrap = document.getElementById('targetSelectorWrap');
+      const select = document.getElementById('targetSelect');
+      const targets = multiTargetMap[activeSource];
+
+      if (targets && targets.length > 1) {
+        wrap.hidden = false;
+        select.innerHTML = '';
+        const currentTarget = selectedTargets[activeSource] || targets[0];
+        targets.forEach(t => {
+          const opt = document.createElement('option');
+          opt.value = t;
+          opt.textContent = t;
+          if (t === currentTarget) opt.selected = true;
+          select.appendChild(opt);
+        });
+      } else {
+        wrap.hidden = true;
+      }
+    }
+
+    document.getElementById('targetSelect').addEventListener('change', (e) => {
+      if (activeSource) {
+        selectedTargets[activeSource] = e.target.value;
+        renderHits();
+      }
+    });
 
     function renderHits() {
       const term = (scanData?.terms || []).find((t) => t.source === activeSource);
       hitBody.innerHTML = '';
       if (!term) return;
+      const effectiveTarget = selectedTargets[term.source] || term.target;
       let allOn = true;
       term.hits.forEach((h) => {
         if (!selectedIds.has(h.id)) allOn = false;
@@ -266,7 +339,7 @@
           chkTermAll.checked = term.hits.every((x) => selectedIds.has(x.id));
           chkGlobalAll.checked = allHitIds().every((id) => selectedIds.has(id));
         };
-        const highlighted = highlightHit(h.line_text, h.start, h.end, h.source, h.target);
+        const highlighted = highlightHit(h.line_text, h.start, h.end, h.source, effectiveTarget);
         tr.innerHTML =
           `<td></td><td>${esc(h.file)}</td><td>${h.line_no}</td><td>${esc(h.timecode)}</td><td>${highlighted}</td>`;
         tr.cells[0].appendChild(ck);
@@ -327,7 +400,9 @@
       try {
         const glossResult = await loadGlossary(g);
         glossaryEntries = glossResult.entries;
-        
+        multiTargetMap = glossResult.multiTargetMap || {};
+        selectedTargets = {};
+
         await loadSubtitleFiles();
         
         const terms = {};
@@ -385,11 +460,16 @@
         
         selectedIds = new Set(allHitIds());
         activeSource = scanData.terms[0]?.source || null;
-        
-        scanSummary.textContent = `工作表: ${scanData.sheet_name} | ${scanData.term_count} 个词，${scanData.hit_count} 处命中`;
+
+        const multiCount = Object.keys(multiTargetMap).length;
+        const multiHint = multiCount > 0
+          ? ` | <span style="color:#c7870f">⚠ ${multiCount} 个词有多个可选 Target，请点击词后在工具栏选择</span>`
+          : '';
+        scanSummary.innerHTML = `工作表: ${scanData.sheet_name} | ${scanData.term_count} 个词，${scanData.hit_count} 处命中${multiHint}`;
         scanLayout.hidden = !scanData.term_count;
         renderTermList();
         renderHits();
+        updateTargetSelector();
         chkGlobalAll.checked = true;
         
         statusScan.className = 'status ok';
@@ -436,21 +516,32 @@
         const changes = [];
         const outputFiles = []; // for folder export
         const useFolderExport = exportFolder.checked;
-        
+
+        // 构建带用户选择 Target 的有效词条
+        const effectiveEntries = glossaryEntries.map(e => {
+          const sel = selectedTargets[e.source];
+          return sel ? { ...e, target: sel } : e;
+        });
+
         const limit = preview.checked ? 1 : subtitleFiles.length;
-        
+
+        const suffix = document.getElementById('langSuffix').value;
+
         for (let i = 0; i < limit; i++) {
           const subFile = subtitleFiles[i];
           const subs = parseSrt(subFile.content);
-          const outName = subFile.name.split('/').pop();
-          
+          const originalName = subFile.name.split('/').pop();
+          const outName = suffix
+            ? originalName.replace(/\.srt$/i, suffix + '.srt')
+            : originalName;
+
           for (let j = 0; j < subs.length; j++) {
             const line = subs[j];
             if (!line.text) continue;
-            
+
             const original = line.text;
             const text = original.replace(/\n/g, ' ');
-            const { text: replaced } = replaceText(text, glossaryEntries, {
+            const { text: replaced } = replaceText(text, effectiveEntries, {
               allowedHitIds: selectedIds,
               fileName: outName,
               lineIndex: j + 1
@@ -506,7 +597,8 @@
           statusReplace.textContent = result.message;
         } else {
           const blob = await outZip.generateAsync({ type: 'blob' });
-          downloadBlob(blob, 'replace_result.zip');
+          const zipName = suffix ? `replace_result${suffix}.zip` : 'replace_result.zip';
+          downloadBlob(blob, zipName);
           statusReplace.className = 'status ok';
           statusReplace.textContent = '已完成，下载已开始';
         }
