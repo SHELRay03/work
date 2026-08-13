@@ -522,7 +522,6 @@
       
       try {
         const outZip = new JSZip();
-        const changes = [];
         const outputFiles = []; // for folder export
         const useFolderExport = exportFolder.checked;
 
@@ -557,16 +556,7 @@
               fileName: originalName,
               lineIndex: j + 1
             });
-            
-            if (replaced !== text) {
-              changes.push({
-                file: outName,
-                line_no: j + 1,
-                original: original,
-                replaced: replaced
-              });
-            }
-            
+
             line.text = replaced;
           }
           
@@ -588,16 +578,7 @@
           outZip.file(relPath, outContent);
           outputFiles.push({ path: relPath, content: outContent });
         }
-        
-        if (changes.length > 0) {
-          let csv = '文件,句序,原文,替换后\n';
-          changes.forEach(c => {
-            csv += `"${c.file}","${c.line_no}","${c.original.replace(/"/g, '""')}","${c.replaced.replace(/"/g, '""')}"\n`;
-          });
-          outZip.file('changes.csv', csv);
-          outputFiles.push({ path: 'changes.csv', content: csv });
-        }
-        
+
         if (useFolderExport) {
           if (!window.showDirectoryPicker) {
             throw new Error('当前浏览器不支持文件夹导出，请使用 Chrome/Edge，或取消勾选"导出为文件夹"');

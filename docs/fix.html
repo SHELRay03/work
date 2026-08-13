@@ -38,6 +38,9 @@
       </div>
       <div class="opts">
         <label><input type="checkbox" id="exportFolder" /> 导出为文件夹（需 Chrome/Edge）</label>
+        <label id="folderNameWrap" hidden>文件夹名称：
+          <input type="text" id="folderName" class="folder-name-input" placeholder="fixed" />
+        </label>
       </div>
       <div class="actions"><button type="button" id="btnFix">批量修复</button></div>
       <div class="status" id="statusFix"></div>
@@ -51,6 +54,11 @@
     const subsFixFolder = document.getElementById('subsFixFolder');
     const dropZoneFix = document.getElementById('dropZoneFix');
     const exportFolder = document.getElementById('exportFolder');
+    const folderNameWrap = document.getElementById('folderNameWrap');
+
+    exportFolder.addEventListener('change', () => {
+      folderNameWrap.hidden = !exportFolder.checked;
+    });
 
     let sourceType = null; // 'zip' | 'folder' | 'drop'
     let droppedSrtFiles = [];
@@ -154,6 +162,8 @@
         const reports = [];
         const outputFiles = [];
         const useFolderExport = exportFolder.checked;
+        const rawFolderName = document.getElementById('folderName').value.trim();
+        const folderName = (rawFolderName || 'fixed').replace(/[\\/:*?"<>|]/g, '_');
         
         for (const subFile of subtitleFiles) {
           const subs = parseSrt(subFile.content);
@@ -170,53 +180,23 @@
             }
           }
           
-          // 检查
-          const report = { fileName: subFile.name, eventCount: subs.length, size: subFile.size, warnings: [] };
-          const sizeKB = subFile.size / 1024;
-          if (subFile.size === 0) {
-            report.warnings.push(`文件大小为 0 字节，可能为空文件`);
-          } else if (sizeKB <= 1) {
-            report.warnings.push(`文件大小仅 ${subFile.size} 字节 (≈${sizeKB.toFixed(1)} KB)，可能内容不完整`);
-          }
-          for (let i = 0; i < subs.length; i++) {
-            if (!subs[i].text || !subs[i].text.trim()) {
-              report.warnings.push(`事件 ${i + 1}: 空文本`);
-            }
-            const dur = subs[i].end - subs[i].start;
-            if (dur > 7000) {
-              report.warnings.push(`事件 ${i + 1}: 时长 ${dur}ms > 7s`);
-            }
-            if (i > 0 && subs[i].start < subs[i - 1].end) {
-              report.warnings.push(`事件 ${i + 1}: 与前一条重叠`);
-            }
-          }
+          // 检查文件大小
+          const report = { fileName: subFile.name, size: subFile.size };
           reports.push(report);
           
           const outContent = generateSrt(subs);
           const outName = subFile.name.split('/').pop();
           outZip.file(outName, outContent);
-          outputFiles.push({ path: 'fixed/' + outName, content: outContent });
+          outputFiles.push({ path: folderName + '/' + outName, content: outContent });
           processedCount++;
         }
-        
-        // 生成报告
-        const smallFileCount = reports.filter(r => r.size <= 1024).length;
-        let reportTxt = `处理文件数: ${processedCount}\n`;
-        if (smallFileCount > 0) {
-          reportTxt += `⚠ 检测到 ${smallFileCount} 个小文件（≤1KB），请检查是否内容不完整\n`;
-        }
-        reportTxt += '\n';
-        reports.forEach(r => {
-          reportTxt += `=== ${r.fileName} ===\n`;
-          reportTxt += `大小: ${r.size} 字节 (≈${(r.size / 1024).toFixed(2)} KB) | 事件数: ${r.eventCount}\n`;
-          if (r.warnings.length > 0) {
-            reportTxt += `警告: ${r.warnings.join('\n')}\n`;
-          }
-          reportTxt += '\n';
-        });
-        outZip.file('fix_report.txt', reportTxt);
-        outputFiles.push({ path: 'fix_report.txt', content: reportTxt });
-        
+
+        const smallFiles = reports.filter(r => r.size <= 1024);
+        const smallFileNames = smallFiles.map(r => r.fileName.split('/').pop()).join('、');
+        const smallFileHint = smallFiles.length > 0
+          ? `，其中 ${smallFiles.length} 个为小文件（≤1KB）：${smallFileNames}`
+          : '';
+
         if (useFolderExport) {
           if (!window.showDirectoryPicker) {
             throw new Error('当前浏览器不支持文件夹导出，请使用 Chrome/Edge，或取消勾选"导出为文件夹"');
@@ -224,16 +204,12 @@
           const result = await saveFilesToFolder(outputFiles);
           if (!result.success) throw new Error(result.message);
           statusFix.className = 'status ok';
-          statusFix.textContent = smallFileCount > 0
-            ? `${result.message}，其中 ${smallFileCount} 个为小文件（≤1KB）`
-            : result.message;
+          statusFix.textContent = `${result.message}（位于 ${folderName}/ 文件夹内）${smallFileHint}`;
         } else {
           const blob = await outZip.generateAsync({ type: 'blob' });
           downloadBlob(blob, 'fix_result.zip');
           statusFix.className = 'status ok';
-          statusFix.textContent = smallFileCount > 0
-            ? `已完成，处理 ${processedCount} 个文件，其中 ${smallFileCount} 个为小文件（≤1KB）`
-            : `已完成，处理 ${processedCount} 个文件`;
+          statusFix.textContent = `已完成，处理 ${processedCount} 个文件${smallFileHint}`;
         }
       } catch (e) {
         statusFix.className = 'status err';
