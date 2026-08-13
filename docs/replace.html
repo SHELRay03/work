@@ -91,6 +91,9 @@
         <label><input type="checkbox" id="preview" /> 预览（仅第一集）</label>
         <label><input type="checkbox" id="alsoFix" checked /> 替换后 SRT 规范化</label>
         <label><input type="checkbox" id="exportFolder" /> 导出为文件夹（需 Chrome/Edge）</label>
+        <label id="folderNameWrap" hidden>文件夹名称：
+          <input type="text" id="folderName" class="folder-name-input" placeholder="replaced" />
+        </label>
         <label>输出后缀：
           <select id="langSuffix" class="scene-select">
             <option value="">不添加</option>
@@ -129,6 +132,12 @@
     const subsReplaceZip = document.getElementById('subsReplaceZip');
     const subsReplaceFolder = document.getElementById('subsReplaceFolder');
     const dropZoneReplace = document.getElementById('dropZoneReplace');
+    const exportFolder = document.getElementById('exportFolder');
+    const folderNameWrap = document.getElementById('folderNameWrap');
+
+    exportFolder.addEventListener('change', () => {
+      folderNameWrap.hidden = !exportFolder.checked;
+    });
 
     dropZoneReplace.addEventListener('click', (e) => {
       const rect = dropZoneReplace.getBoundingClientRect();
@@ -526,6 +535,8 @@
         const limit = preview.checked ? 1 : subtitleFiles.length;
 
         const suffix = document.getElementById('langSuffix').value;
+        const rawFolderName = document.getElementById('folderName').value.trim();
+        const folderName = (rawFolderName || 'replaced').replace(/[\\/:*?"<>|]/g, '_');
 
         for (let i = 0; i < limit; i++) {
           const subFile = subtitleFiles[i];
@@ -543,7 +554,7 @@
             const text = original.replace(/\n/g, ' ');
             const { text: replaced } = replaceText(text, effectiveEntries, {
               allowedHitIds: selectedIds,
-              fileName: outName,
+              fileName: originalName,
               lineIndex: j + 1
             });
             
@@ -573,7 +584,7 @@
           }
           
           const outContent = generateSrt(subs);
-          const relPath = 'replaced/' + outName;
+          const relPath = folderName + '/' + outName;
           outZip.file(relPath, outContent);
           outputFiles.push({ path: relPath, content: outContent });
         }
@@ -594,7 +605,7 @@
           const result = await saveFilesToFolder(outputFiles);
           if (!result.success) throw new Error(result.message);
           statusReplace.className = 'status ok';
-          statusReplace.textContent = result.message;
+          statusReplace.textContent = `${result.message}（位于 ${folderName}/ 文件夹内）`;
         } else {
           const blob = await outZip.generateAsync({ type: 'blob' });
           const zipName = suffix ? `replace_result${suffix}.zip` : 'replace_result.zip';

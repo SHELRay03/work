@@ -116,18 +116,19 @@
         for (const [name, file] of Object.entries(zip.files)) {
           if (file.dir || !name.toLowerCase().endsWith('.srt')) continue;
           const content = await file.async('string');
-          results.push({ name, content });
+          const size = new Blob([content]).size;
+          results.push({ name, content, size });
         }
       } else if (sourceType === 'folder') {
         const items = extractSrtFromFileList(subsFixFolder.files);
         for (const item of items) {
           const content = await item.file.text();
-          results.push({ name: item.name, content });
+          results.push({ name: item.name, content, size: item.file.size });
         }
       } else if (sourceType === 'drop') {
         for (const item of droppedSrtFiles) {
           const content = await item.file.text();
-          results.push({ name: item.name, content });
+          results.push({ name: item.name, content, size: item.file.size });
         }
       } else {
         throw new Error('请选择或拖入字幕文件');
@@ -170,7 +171,13 @@
           }
           
           // 检查
-          const report = { fileName: subFile.name, eventCount: subs.length, warnings: [] };
+          const report = { fileName: subFile.name, eventCount: subs.length, size: subFile.size, warnings: [] };
+          const sizeKB = subFile.size / 1024;
+          if (subFile.size === 0) {
+            report.warnings.push(`文件大小为 0 字节，可能为空文件`);
+          } else if (sizeKB <= 1) {
+            report.warnings.push(`文件大小仅 ${subFile.size} 字节 (≈${sizeKB.toFixed(1)} KB)，可能内容不完整`);
+          }
           for (let i = 0; i < subs.length; i++) {
             if (!subs[i].text || !subs[i].text.trim()) {
               report.warnings.push(`事件 ${i + 1}: 空文本`);
@@ -193,10 +200,15 @@
         }
         
         // 生成报告
-        let reportTxt = `处理文件数: ${processedCount}\n\n`;
+        const smallFileCount = reports.filter(r => r.size <= 1024).length;
+        let reportTxt = `处理文件数: ${processedCount}\n`;
+        if (smallFileCount > 0) {
+          reportTxt += `⚠ 检测到 ${smallFileCount} 个小文件（≤1KB），请检查是否内容不完整\n`;
+        }
+        reportTxt += '\n';
         reports.forEach(r => {
           reportTxt += `=== ${r.fileName} ===\n`;
-          reportTxt += `事件数: ${r.eventCount}\n`;
+          reportTxt += `大小: ${r.size} 字节 (≈${(r.size / 1024).toFixed(2)} KB) | 事件数: ${r.eventCount}\n`;
           if (r.warnings.length > 0) {
             reportTxt += `警告: ${r.warnings.join('\n')}\n`;
           }
@@ -212,12 +224,16 @@
           const result = await saveFilesToFolder(outputFiles);
           if (!result.success) throw new Error(result.message);
           statusFix.className = 'status ok';
-          statusFix.textContent = result.message;
+          statusFix.textContent = smallFileCount > 0
+            ? `${result.message}，其中 ${smallFileCount} 个为小文件（≤1KB）`
+            : result.message;
         } else {
           const blob = await outZip.generateAsync({ type: 'blob' });
           downloadBlob(blob, 'fix_result.zip');
           statusFix.className = 'status ok';
-          statusFix.textContent = `已完成，处理 ${processedCount} 个文件`;
+          statusFix.textContent = smallFileCount > 0
+            ? `已完成，处理 ${processedCount} 个文件，其中 ${smallFileCount} 个为小文件（≤1KB）`
+            : `已完成，处理 ${processedCount} 个文件`;
         }
       } catch (e) {
         statusFix.className = 'status err';
