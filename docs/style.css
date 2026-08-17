@@ -1225,13 +1225,52 @@ button.btn-secondary:hover:not(:disabled) {
 
 .rename-row {
   display: flex;
-  align-items: center;
-  gap: 0.8rem;
+  flex-direction: column;
+  gap: 0.5rem;
   padding: 0.6rem 0.8rem;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid var(--line);
   border-radius: var(--radius);
+}
+
+.rename-head {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
   flex-wrap: wrap;
+}
+
+.rename-lang-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding-left: 2.4rem;
+}
+
+.rename-lang-row[hidden] {
+  display: none;
+}
+
+.lang-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.lang-inline-label {
+  font-size: 0.8rem;
+  color: var(--text-soft);
+  font-weight: 600;
+}
+
+.rename-lang-row .lang-chips {
+  margin-top: 0;
+}
+
+.rename-lang-row .lang-chips label {
+  padding: 0.15rem 0.5rem;
+  font-size: 0.8rem;
 }
 
 .rename-idx {

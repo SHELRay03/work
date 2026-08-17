@@ -20,10 +20,11 @@
   </header>
   <main class="hud-main">
     <h1 class="page-title">批量重命名</h1>
-    <p class="page-sub">一键将多个文件夹重命名为统一命名规范</p>
+    <p class="page-sub">为每个文件夹选择目标名称，含 X/Y 的模板可独立设置语言变量</p>
     <section class="panel">
       <div class="panel-head"><span class="panel-dot"></span><h2>功能操作</h2></div>
-      <p class="card-desc">上传多个文件夹（内含文件），为每个文件夹从下列命名模板中选择目标名称。</p>
+      <p class="card-desc">上传多个文件夹（内含文件），为每个文件夹从下列命名模板中选择目标名称。选择含 X/Y 的模板时，会显示对应的语言变量选择。</p>
+
       <div class="field">
         <label>上传文件夹（支持拖入多个独立文件夹，或选择一个父文件夹）</label>
         <div class="drop-zone" id="dropZoneRename">
@@ -36,41 +37,12 @@
       </div>
 
       <div class="field" id="renameListWrap" hidden>
-        <label>目标名称选择</label>
+        <label>目标名称选择（每行一个文件夹，独立设置）</label>
         <div id="renameList" class="rename-list"></div>
       </div>
 
-      <div class="opts" id="langOpts" hidden>
-        <div class="lang-block">
-          <label class="lang-label">X 语言变量：</label>
-          <div class="lang-chips" id="langChipsX">
-            <label><input type="radio" name="langVarX" value="中" checked> 中</label>
-            <label><input type="radio" name="langVarX" value="英"> 英</label>
-            <label><input type="radio" name="langVarX" value="日"> 日</label>
-            <label><input type="radio" name="langVarX" value="韩"> 韩</label>
-            <label><input type="radio" name="langVarX" value="西"> 西</label>
-            <label><input type="radio" name="langVarX" value="德"> 德</label>
-            <label><input type="radio" name="langVarX" value="法"> 法</label>
-            <label><input type="radio" name="langVarX" value="泰"> 泰</label>
-          </div>
-        </div>
-        <div class="lang-block">
-          <label class="lang-label">Y 语言变量（仅 YX 字幕使用）：</label>
-          <div class="lang-chips" id="langChipsY">
-            <label><input type="radio" name="langVarY" value="中" checked> 中</label>
-            <label><input type="radio" name="langVarY" value="英"> 英</label>
-            <label><input type="radio" name="langVarY" value="日"> 日</label>
-            <label><input type="radio" name="langVarY" value="韩"> 韩</label>
-            <label><input type="radio" name="langVarY" value="西"> 西</label>
-            <label><input type="radio" name="langVarY" value="德"> 德</label>
-            <label><input type="radio" name="langVarY" value="法"> 法</label>
-            <label><input type="radio" name="langVarY" value="泰"> 泰</label>
-          </div>
-        </div>
-      </div>
-
       <div class="opts" id="exportOpts" hidden>
-        <label><input type="radio" name="exportMode" value="folder" checked> 直接保存到文件夹（需 Chrome/Edge）
+        <label><input type="radio" name="exportMode" value="folder" checked> 直接保存到文件夹（需 Chrome/Edge）</label>
         <label><input type="radio" name="exportMode" value="zip"> 下载 ZIP 压缩包</label>
       </div>
 
@@ -83,21 +55,21 @@
   </main>
   <script>
     // 名称模板：5 种
-    // X 文旁白、X 语压制视频：使用 X 语言变量
-    // YX 字幕：Y 和 X 分别为两个独立语言变量
     // template(x, y) 中 x 代表 X 变量，y 代表 Y 变量
+    // hasX / hasY 标记是否需要对应的语言变量
     const NAME_TEMPLATES = [
-      { id: 'clean', label: '净版视频', template: () => '净版视频' },
-      { id: 'narration', label: 'X 文旁白', template: (x) => `${x}文旁白` },
-      { id: 'original', label: '原剧', template: () => '原剧' },
-      { id: 'subtitle', label: 'YX 字幕', template: (x, y) => `${y}${x}字幕` },
-      { id: '压制', label: 'X 语压制视频', template: (x) => `${x}语压制视频` }
+      { id: 'clean',      label: '净版视频',      hasX: false, hasY: false, template: () => '净版视频' },
+      { id: 'narration',   label: 'X 文旁白',      hasX: true,  hasY: false, template: (x) => `${x}文旁白` },
+      { id: 'original',    label: '原剧',          hasX: false, hasY: false, template: () => '原剧' },
+      { id: 'subtitle',   label: 'YX 字幕',       hasX: true,  hasY: true,  template: (x, y) => `${y}${x}字幕` },
+      { id: '压制',       label: 'X 语压制视频',  hasX: true,  hasY: false, template: (x) => `${x}语压制视频` }
     ];
+
+    const LANGS = ['中', '英', '日', '韩', '西', '德', '法', '泰'];
 
     const folderInput = document.getElementById('folderInput');
     const renameListWrap = document.getElementById('renameListWrap');
     const renameList = document.getElementById('renameList');
-    const langOpts = document.getElementById('langOpts');
     const exportOpts = document.getElementById('exportOpts');
     const actionBar = document.getElementById('actionBar');
     const btnPreview = document.getElementById('btnPreview');
@@ -106,12 +78,10 @@
     const dropZoneRename = document.getElementById('dropZoneRename');
 
     let folders = []; // [{ name, files: [{ name, file }] }]
-    let inputMode = 'picker'; // 'picker' | 'drop'
 
     // 拖入区域点击触发选择
     dropZoneRename.addEventListener('click', () => folderInput.click());
 
-    // 拖拽事件
     ['dragover', 'dragenter'].forEach(evt => {
       dropZoneRename.addEventListener(evt, (e) => {
         e.preventDefault();
@@ -164,18 +134,14 @@
     dropZoneRename.addEventListener('drop', async (e) => {
       const items = e.dataTransfer?.items;
       if (!items) return;
-      inputMode = 'drop';
-
       try {
         const dirResults = [];
         for (const item of items) {
           const entry = item.webkitGetAsEntry?.();
           if (!entry) continue;
-          // 每个顶层 entry 视为一个独立文件夹
           const files = await readDroppedDirEntry(entry);
           dirResults.push({ name: entry.name, files });
         }
-
         folders = dirResults.filter(f => f.files.length > 0);
         if (folders.length === 0) {
           statusRename.className = 'status err';
@@ -190,12 +156,9 @@
     });
 
     // 从 webkitdirectory 输入中提取顶层文件夹
-    // webkitRelativePath: "rootName/sub/file.mp4"
-    // 如果用户选了一个父文件夹，内部含多个子文件夹（A, B, C），需要把 A/B/C 当独立文件夹
+    // 如果用户选了一个父文件夹，内部含多个子文件夹，则把每个子文件夹当独立文件夹
     function extractTopFolders(fileList) {
-      const map = new Map(); // topName -> [{ name, file }]
-
-      // 先检查是否只选了一个根目录
+      const map = new Map();
       const roots = new Set();
       for (const f of fileList) {
         const parts = f.webkitRelativePath.split('/');
@@ -203,14 +166,13 @@
         roots.add(parts[0]);
       }
 
-      // 如果只有一个根目录，需要看其直接子文件夹是独立文件夹还是文件
       if (roots.size === 1) {
         const rootName = Array.from(roots)[0];
         // 检查根目录下是否有子文件夹
         const subDirs = new Set();
         for (const f of fileList) {
           const parts = f.webkitRelativePath.split('/');
-          if (parts.length < 3) continue; // 直接在根下的文件
+          if (parts.length < 3) continue;
           subDirs.add(parts[1]);
         }
 
@@ -220,14 +182,13 @@
             const parts = f.webkitRelativePath.split('/');
             if (parts.length < 3) continue;
             const subName = parts[1];
-            // 相对路径：去掉 rootName 和 subName
             const relName = parts.slice(2).join('/');
             if (!relName) continue;
             if (!map.has(subName)) map.set(subName, []);
             map.get(subName).push({ name: relName, file: f });
           }
         } else {
-          // 单一根目录，没有多个子文件夹：把根目录作为一个文件夹
+          // 单一根目录：整个根目录作为一个文件夹
           for (const f of fileList) {
             const parts = f.webkitRelativePath.split('/');
             if (parts.length < 2) continue;
@@ -255,10 +216,6 @@
 
     folderInput.addEventListener('change', (e) => {
       const files = Array.from(e.target.files);
-      // webkitdirectory: webkitRelativePath 形如 "rootFolder/sub/file.mp4"
-      // 提取 rootFolder 下一层的子文件夹作为独立文件夹
-      // 如果只有一个根目录，则根目录本身就是一个文件夹
-      inputMode = 'picker';
       folders = extractTopFolders(files);
       if (folders.length === 0) {
         statusRename.className = 'status err';
@@ -271,7 +228,6 @@
     function showFolders() {
       renderRenameList();
       renameListWrap.hidden = false;
-      langOpts.hidden = false;
       exportOpts.hidden = false;
       actionBar.hidden = false;
       btnRename.hidden = true;
@@ -284,10 +240,20 @@
       folders.forEach((f, idx) => {
         const row = document.createElement('div');
         row.className = 'rename-row';
+        row.dataset.idx = idx;
 
-        const src = document.createElement('div');
-        src.className = 'rename-src';
-        src.innerHTML = `<span class="rename-idx">${idx + 1}</span><span class="rename-name" title="${f.name}">${f.name}</span>`;
+        // 第一行：序号 + 原名 + 箭头 + 目标模板选择 + 预览
+        const head = document.createElement('div');
+        head.className = 'rename-head';
+
+        const idxEl = document.createElement('span');
+        idxEl.className = 'rename-idx';
+        idxEl.textContent = idx + 1;
+
+        const nameEl = document.createElement('span');
+        nameEl.className = 'rename-name';
+        nameEl.title = f.name;
+        nameEl.textContent = f.name;
 
         const arrow = document.createElement('span');
         arrow.className = 'rename-arrow';
@@ -304,70 +270,126 @@
         preview.className = 'rename-preview';
         preview.dataset.idx = idx;
 
-        select.addEventListener('change', () => updatePreview(idx, select.value, preview));
-        updatePreview(idx, select.value, preview);
+        head.appendChild(idxEl);
+        head.appendChild(nameEl);
+        head.appendChild(arrow);
+        head.appendChild(select);
+        head.appendChild(preview);
 
-        row.appendChild(src);
-        row.appendChild(arrow);
-        row.appendChild(select);
-        row.appendChild(preview);
+        // 第二行：语言变量（仅当模板含 X/Y 时显示）
+        const langRow = document.createElement('div');
+        langRow.className = 'rename-lang-row';
+        langRow.dataset.idx = idx;
+
+        row.appendChild(head);
+        row.appendChild(langRow);
+
+        // 初始化
+        updateRow(idx, select.value);
+        select.addEventListener('change', () => updateRow(idx, select.value));
+
         renameList.appendChild(row);
       });
     }
 
-    function getLangX() {
-      const checked = document.querySelector('input[name="langVarX"]:checked');
-      return checked ? checked.value : '中';
-    }
-
-    function getLangY() {
-      const checked = document.querySelector('input[name="langVarY"]:checked');
-      return checked ? checked.value : '中';
-    }
-
-    function updatePreview(idx, templateId, previewEl) {
-      const x = getLangX();
-      const y = getLangY();
+    function updateRow(idx, templateId) {
+      const row = document.querySelector(`.rename-row[data-idx="${idx}"]`);
+      if (!row) return;
+      const langRow = row.querySelector('.rename-lang-row');
+      const preview = row.querySelector('.rename-preview');
       const tpl = NAME_TEMPLATES.find(t => t.id === templateId);
       if (!tpl) return;
-      const newName = tpl.template(x, y);
-      previewEl.textContent = newName;
-      previewEl.dataset.newName = newName;
+
+      // 清空语言行
+      langRow.innerHTML = '';
+      langRow.hidden = true;
+
+      // 当模板含 X 或 Y 时，渲染对应语言选择
+      if (tpl.hasX || tpl.hasY) {
+        langRow.hidden = false;
+
+        if (tpl.hasX) {
+          const xBlock = document.createElement('div');
+          xBlock.className = 'lang-inline';
+          xBlock.innerHTML = `<span class="lang-inline-label">X：</span>`;
+          const xChips = document.createElement('div');
+          xChips.className = 'lang-chips';
+          xChips.dataset.var = 'x';
+          xChips.dataset.idx = idx;
+          xChips.innerHTML = LANGS.map((l, i) =>
+            `<label><input type="radio" name="langX_${idx}" value="${l}" ${i === 0 ? 'checked' : ''}>${l}</label>`
+          ).join('');
+          xBlock.appendChild(xChips);
+          langRow.appendChild(xBlock);
+        }
+
+        if (tpl.hasY) {
+          const yBlock = document.createElement('div');
+          yBlock.className = 'lang-inline';
+          yBlock.innerHTML = `<span class="lang-inline-label">Y：</span>`;
+          const yChips = document.createElement('div');
+          yChips.className = 'lang-chips';
+          yChips.dataset.var = 'y';
+          yChips.dataset.idx = idx;
+          yChips.innerHTML = LANGS.map((l, i) =>
+            `<label><input type="radio" name="langY_${idx}" value="${l}" ${i === 0 ? 'checked' : ''}>${l}</label>`
+          ).join('');
+          yBlock.appendChild(yChips);
+          langRow.appendChild(yBlock);
+        }
+      }
+
+      updatePreviewForRow(idx, templateId);
     }
 
-    // 语言切换时刷新所有预览
-    langOpts.addEventListener('change', () => {
-      document.querySelectorAll('.rename-select').forEach(sel => {
-        const idx = sel.dataset.idx;
-        const preview = document.querySelector(`.rename-preview[data-idx="${idx}"]`);
-        updatePreview(idx, sel.value, preview);
-      });
+    function updatePreviewForRow(idx, templateId) {
+      const preview = document.querySelector(`.rename-preview[data-idx="${idx}"]`);
+      const tpl = NAME_TEMPLATES.find(t => t.id === templateId);
+      if (!tpl || !preview) return;
+
+      const x = getLangFor(idx, 'x');
+      const y = getLangFor(idx, 'y');
+      const newName = tpl.template(x, y);
+      preview.textContent = newName;
+      preview.dataset.newName = newName;
+    }
+
+    function getLangFor(idx, varName) {
+      const name = `lang${varName.toUpperCase()}_${idx}`;
+      const checked = document.querySelector(`input[name="${name}"]:checked`);
+      return checked ? checked.value : '中';
+    }
+
+    // 监听语言变量变化（事件委托）
+    renameList.addEventListener('change', (e) => {
+      const target = e.target;
+      if (target.type === 'radio' && (target.name.startsWith('langX_') || target.name.startsWith('langY_'))) {
+        const idx = target.name.split('_')[1];
+        const select = document.querySelector(`.rename-select[data-idx="${idx}"]`);
+        if (select) updatePreviewForRow(idx, select.value);
+      }
     });
 
     btnPreview.addEventListener('click', () => {
-      // 统计目标名称
       const mapping = [];
       const nameCount = new Map();
       folders.forEach((f, idx) => {
-        const sel = document.querySelector(`.rename-select[data-idx="${idx}"]`);
         const preview = document.querySelector(`.rename-preview[data-idx="${idx}"]`);
         const newName = preview.dataset.newName;
         mapping.push({ old: f.name, new: newName });
         nameCount.set(newName, (nameCount.get(newName) || 0) + 1);
       });
 
-      // 检查重名
       const duplicates = Array.from(nameCount.entries()).filter(([_, n]) => n > 1);
       if (duplicates.length > 0) {
         statusRename.className = 'status err';
-        statusRename.textContent = `存在重名目标：${duplicates.map(([n, c]) => `"${n}" × ${c}`).join('、')}。请在浏览器导出时手动修改，或重新选择。`;
+        statusRename.textContent = `存在重名目标：${duplicates.map(([n, c]) => `"${n}" × ${c}`).join('、')}，请调整。`;
+        btnRename.hidden = true;
         return;
       }
 
-      // 生成预览摘要
       statusRename.className = 'status ok';
       statusRename.textContent = `预览：将重命名 ${mapping.length} 个文件夹`;
-      // 同时在状态栏下方渲染详细映射表
       renderPreviewTable(mapping);
       btnRename.hidden = false;
     });
@@ -384,13 +406,12 @@
       actionBar.parentElement.appendChild(table);
     }
 
-    // 执行重命名：支持直接保存到文件夹或下载 ZIP
+    // 执行重命名
     btnRename.addEventListener('click', async () => {
       statusRename.className = 'status';
       btnRename.disabled = true;
 
       try {
-        // 收集映射：每个文件夹新名称 + 文件列表（含相对路径）
         const mapping = [];
         folders.forEach((f, idx) => {
           const preview = document.querySelector(`.rename-preview[data-idx="${idx}"]`);
@@ -400,7 +421,6 @@
         const exportMode = document.querySelector('input[name="exportMode"]:checked').value;
 
         if (exportMode === 'folder') {
-          // 直接保存到文件夹
           if (!window.showDirectoryPicker) {
             throw new Error('当前浏览器不支持文件夹导出，请使用 Chrome/Edge，或选择 ZIP 导出');
           }
@@ -411,11 +431,9 @@
           let fileCount = 0;
           for (const m of mapping) {
             for (const { name: relName, file } of m.files) {
-              // 新路径：新文件夹名/原相对路径
               const fullPath = m.new + '/' + relName;
               const parts = fullPath.split('/');
 
-              // 逐层创建子目录
               let current = dirHandle;
               for (let i = 0; i < parts.length - 1; i++) {
                 current = await current.getDirectoryHandle(parts[i], { create: true });
@@ -432,7 +450,6 @@
           statusRename.className = 'status ok';
           statusRename.textContent = `已完成，已保存 ${mapping.length} 个重命名后的文件夹（${fileCount} 个文件）`;
         } else {
-          // 下载 ZIP
           statusRename.textContent = '正在打包…';
           const zip = new JSZip();
           for (const m of mapping) {
