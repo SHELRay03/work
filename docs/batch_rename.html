@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>批量重命名 · 字幕工具箱</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="bg-layer" aria-hidden="true"></div>
+  <header class="hud-top">
+    <a href="index.html" class="brand"><span class="brand-mark" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="1.5" rx=".5" fill="#fafffd"/><rect x="2" y="7.25" width="9" height="1.5" rx=".5" fill="#fafffd" opacity=".9"/><rect x="2" y="10.5" width="11" height="1.5" rx=".5" fill="#fafffd" opacity=".75"/></svg>
+      </span>字幕工具箱</a>
+    <nav class="hud-nav"><a href="index.html">首页</a><a href="replace.html">术语替换</a><a href="identify.html">术语识别</a><a href="fix.html">SRT 修复</a><a href="batch_rename.html" class="active">批量重命名</a></nav>
+  </header>
+  <main class="hud-main">
+    <h1 class="page-title">批量重命名</h1>
+    <p class="page-sub">一键将多个文件夹重命名为统一命名规范</p>
+    <section class="panel">
+      <div class="panel-head"><span class="panel-dot"></span><h2>功能操作</h2></div>
+      <p class="card-desc">上传多个文件夹（内含文件），为每个文件夹从下列命名模板中选择目标名称。</p>
+      <div class="field">
+        <label>选择文件夹（可多选）</label>
+        <input type="file" id="folderInput" webkitdirectory multiple />
+      </div>
+
+      <div class="field" id="renameListWrap" hidden>
+        <label>目标名称选择</label>
+        <div id="renameList" class="rename-list"></div>
+      </div>
+
+      <div class="opts" id="langOpts" hidden>
+        <label>语言变量（X / Y 使用）：</label>
+        <div class="lang-chips" id="langChips">
+          <label><input type="radio" name="langVar" value="中" checked> 中</label>
+          <label><input type="radio" name="langVar" value="英"> 英</label>
+          <label><input type="radio" name="langVar" value="日"> 日</label>
+          <label><input type="radio" name="langVar" value="韩"> 韩</label>
+          <label><input type="radio" name="langVar" value="西"> 西</label>
+          <label><input type="radio" name="langVar" value="德"> 德</label>
+          <label><input type="radio" name="langVar" value="法"> 法</label>
+          <label><input type="radio" name="langVar" value="泰"> 泰</label>
+        </div>
+      </div>
+
+      <div class="opts" id="exportOpts" hidden>
+        <label><input type="radio" name="exportMode" value="folder" checked> 直接保存到文件夹（需 Chrome/Edge）
+        <label><input type="radio" name="exportMode" value="zip"> 下载 ZIP 压缩包</label>
+      </div>
+
+      <div class="actions" id="actionBar" hidden>
+        <button type="button" id="btnPreview">预览变更</button>
+        <button type="button" id="btnRename" class="btn-primary" hidden>执行重命名</button>
+      </div>
+      <div class="status" id="statusRename"></div>
+    </section>
+  </main>
+  <script>
+    // 名称模板：5 种
+    // X 文旁白、X 语压制视频：X 为语言变量
+    // YX 字幕：Y 为语言变量（仅字幕需要两个变量，这里 Y 用同一变量简化）
+    const NAME_TEMPLATES = [
+      { id: 'clean', label: '净版视频', template: () => '净版视频' },
+      { id: 'narration', label: 'X 文旁白', template: (lang) => `${lang}文旁白` },
+      { id: 'original', label: '原剧', template: () => '原剧' },
+      { id: 'subtitle', label: 'YX 字幕', template: (lang) => `${lang}${lang}字幕` },
+      { id: '压制', label: 'X 语压制视频', template: (lang) => `${lang}语压制视频` }
+    ];
+
+    const folderInput = document.getElementById('folderInput');
+    const renameListWrap = document.getElementById('renameListWrap');
+    const renameList = document.getElementById('renameList');
+    const langOpts = document.getElementById('langOpts');
+    const exportOpts = document.getElementById('exportOpts');
+    const actionBar = document.getElementById('actionBar');
+    const btnPreview = document.getElementById('btnPreview');
+    const btnRename = document.getElementById('btnRename');
+    const statusRename = document.getElementById('statusRename');
+
+    let folders = []; // [{ name, path }]
+    let folderEntries = []; // 用于写回的句柄或路径
+
+    // 从 webkitdirectory 输入中提取顶层文件夹
+    function extractTopFolders(fileList) {
+      const map = new Map(); // topName -> Set of file relative paths
+      for (const f of fileList) {
+        const parts = f.webkitRelativePath.split('/');
+        if (parts.length < 2) continue;
+        const topName = parts[0];
+        if (!map.has(topName)) map.set(topName, []);
+        map.get(topName).push(f);
+      }
+      return Array.from(map.entries()).map(([name, files]) => ({ name, files }));
+    }
+
+    folderInput.addEventListener('change', (e) => {
+      const files = Array.from(e.target.files);
+      folders = extractTopFolders(files);
+      if (folders.length === 0) {
+        statusRename.className = 'status err';
+        statusRename.textContent = '未检测到文件夹';
+        return;
+      }
+      renderRenameList();
+      renameListWrap.hidden = false;
+      langOpts.hidden = false;
+      exportOpts.hidden = false;
+      actionBar.hidden = false;
+      btnRename.hidden = true;
+      statusRename.className = 'status';
+      statusRename.textContent = `已识别 ${folders.length} 个文件夹，请为每个选择目标名称`;
+    });
+
+    function renderRenameList() {
+      renameList.innerHTML = '';
+      folders.forEach((f, idx) => {
+        const row = document.createElement('div');
+        row.className = 'rename-row';
+
+        const src = document.createElement('div');
+        src.className = 'rename-src';
+        src.innerHTML = `<span class="rename-idx">${idx + 1}</span><span class="rename-name" title="${f.name}">${f.name}</span>`;
+
+        const arrow = document.createElement('span');
+        arrow.className = 'rename-arrow';
+        arrow.textContent = '→';
+
+        const select = document.createElement('select');
+        select.className = 'rename-select';
+        select.dataset.idx = idx;
+        select.innerHTML = NAME_TEMPLATES.map(t =>
+          `<option value="${t.id}">${t.label}</option>`
+        ).join('');
+
+        const preview = document.createElement('span');
+        preview.className = 'rename-preview';
+        preview.dataset.idx = idx;
+
+        select.addEventListener('change', () => updatePreview(idx, select.value, preview));
+        updatePreview(idx, select.value, preview);
+
+        row.appendChild(src);
+        row.appendChild(arrow);
+        row.appendChild(select);
+        row.appendChild(preview);
+        renameList.appendChild(row);
+      });
+    }
+
+    function getLang() {
+      const checked = document.querySelector('input[name="langVar"]:checked');
+      return checked ? checked.value : '中';
+    }
+
+    function updatePreview(idx, templateId, previewEl) {
+      const lang = getLang();
+      const tpl = NAME_TEMPLATES.find(t => t.id === templateId);
+      if (!tpl) return;
+      const newName = tpl.template(lang);
+      previewEl.textContent = newName;
+      previewEl.dataset.newName = newName;
+    }
+
+    // 语言切换时刷新所有预览
+    langOpts.addEventListener('change', () => {
+      document.querySelectorAll('.rename-select').forEach(sel => {
+        const idx = sel.dataset.idx;
+        const preview = document.querySelector(`.rename-preview[data-idx="${idx}"]`);
+        updatePreview(idx, sel.value, preview);
+      });
+    });
+
+    btnPreview.addEventListener('click', () => {
+      // 统计目标名称
+      const mapping = [];
+      const nameCount = new Map();
+      folders.forEach((f, idx) => {
+        const sel = document.querySelector(`.rename-select[data-idx="${idx}"]`);
+        const preview = document.querySelector(`.rename-preview[data-idx="${idx}"]`);
+        const newName = preview.dataset.newName;
+        mapping.push({ old: f.name, new: newName });
+        nameCount.set(newName, (nameCount.get(newName) || 0) + 1);
+      });
+
+      // 检查重名
+      const duplicates = Array.from(nameCount.entries()).filter(([_, n]) => n > 1);
+      if (duplicates.length > 0) {
+        statusRename.className = 'status err';
+        statusRename.textContent = `存在重名目标：${duplicates.map(([n, c]) => `"${n}" × ${c}`).join('、')}。请在浏览器导出时手动修改，或重新选择。`;
+        return;
+      }
+
+      // 生成预览摘要
+      statusRename.className = 'status ok';
+      statusRename.textContent = `预览：将重命名 ${mapping.length} 个文件夹`;
+      // 同时在状态栏下方渲染详细映射表
+      renderPreviewTable(mapping);
+      btnRename.hidden = false;
+    });
+
+    function renderPreviewTable(mapping) {
+      let existing = document.getElementById('previewTable');
+      if (existing) existing.remove();
+      const table = document.createElement('div');
+      table.id = 'previewTable';
+      table.className = 'preview-table';
+      table.innerHTML = mapping.map(m =>
+        `<div class="preview-row"><span class="preview-old">${m.old}</span><span class="preview-arrow">→</span><span class="preview-new">${m.new}</span></div>`
+      ).join('');
+      actionBar.parentElement.appendChild(table);
+    }
+
+    // 执行重命名：支持直接保存到文件夹或下载 ZIP
+    btnRename.addEventListener('click', async () => {
+      statusRename.className = 'status';
+      btnRename.disabled = true;
+
+      try {
+        // 收集映射
+        const mapping = [];
+        folders.forEach((f, idx) => {
+          const preview = document.querySelector(`.rename-preview[data-idx="${idx}"]`);
+          mapping.push({ old: f.name, new: preview.dataset.newName, files: f.files });
+        });
+
+        const exportMode = document.querySelector('input[name="exportMode"]:checked').value;
+
+        if (exportMode === 'folder') {
+          // 直接保存到文件夹
+          if (!window.showDirectoryPicker) {
+            throw new Error('当前浏览器不支持文件夹导出，请使用 Chrome/Edge，或选择 ZIP 导出');
+          }
+          statusRename.textContent = '请选择保存位置…';
+          const dirHandle = await window.showDirectoryPicker();
+
+          statusRename.textContent = '正在写入文件…';
+          let fileCount = 0;
+          for (const m of mapping) {
+            for (const file of m.files) {
+              const relPath = file.webkitRelativePath;
+              const parts = relPath.split('/');
+              parts[0] = m.new; // 替换顶层文件夹名
+              const newPath = parts.join('/');
+
+              // 逐层创建子目录
+              let current = dirHandle;
+              for (let i = 0; i < parts.length - 1; i++) {
+                current = await current.getDirectoryHandle(parts[i], { create: true });
+              }
+              const fileName = parts[parts.length - 1];
+              const fileHandle = await current.getFileHandle(fileName, { create: true });
+              const writable = await fileHandle.createWritable();
+              const content = await file.arrayBuffer();
+              await writable.write(content);
+              await writable.close();
+              fileCount++;
+            }
+          }
+          statusRename.className = 'status ok';
+          statusRename.textContent = `已完成，已保存 ${mapping.length} 个重命名后的文件夹（${fileCount} 个文件）`;
+        } else {
+          // 下载 ZIP
+          statusRename.textContent = '正在打包…';
+          const zip = new JSZip();
+          for (const m of mapping) {
+            for (const file of m.files) {
+              const relPath = file.webkitRelativePath;
+              const parts = relPath.split('/');
+              parts[0] = m.new;
+              const newPath = parts.join('/');
+              const content = await file.arrayBuffer();
+              zip.file(newPath, content);
+            }
+          }
+          const blob = await zip.generateAsync({ type: 'blob' });
+          downloadBlob(blob, 'renamed_folders.zip');
+          statusRename.className = 'status ok';
+          statusRename.textContent = `已完成，已下载 ZIP：renamed_folders.zip（含 ${mapping.length} 个重命名后的文件夹）`;
+        }
+      } catch (e) {
+        if (e.name === 'AbortError') {
+          statusRename.className = 'status';
+          statusRename.textContent = '已取消';
+        } else {
+          statusRename.className = 'status err';
+          statusRename.textContent = '失败：' + e.message;
+        }
+      } finally {
+        btnRename.disabled = false;
+      }
+    });
+
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</body>
+</html>
