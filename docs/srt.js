@@ -473,29 +473,28 @@ function findNonOverlapping(text, entries) {
 function replaceText(text, entries, options = {}) {
   const { matches, conflicts } = findNonOverlapping(text, sortEntries(entries));
   const allowedHitIds = options.allowedHitIds || null;
+  const hitTargetOverrides = options.hitTargetOverrides || null; // { hitId: target }
   const fileName = options.fileName || '';
   const lineIndex = options.lineIndex || 0;
-  
-  console.log('[replaceText]', 'fileName:', fileName, 'lineIndex:', lineIndex);
-  console.log('[replaceText]', 'matches found:', matches.length);
-  console.log('[replaceText]', 'allowedHitIds size:', allowedHitIds ? allowedHitIds.size : 'null (all allowed)');
   
   if (matches.length === 0) {
     return { text, hits: [], conflicts };
   }
   
-  // 过滤出允许替换的命中
+  // 过滤出允许替换的命中，并应用每个 hit 独立的 Target 覆盖
   const filteredMatches = [];
   for (const [start, end, entry] of matches) {
     const hitId = `${fileName}|${lineIndex}|${start}|${end}|${entry.source}`;
     const isAllowed = allowedHitIds === null || allowedHitIds.has(hitId);
-    console.log('[replaceText]', 'hitId:', hitId, 'allowed:', isAllowed);
     if (isAllowed) {
-      filteredMatches.push([start, end, entry]);
+      // 应用每条命中独立的 Target 覆盖
+      let effectiveTarget = entry.target;
+      if (hitTargetOverrides && hitTargetOverrides[hitId]) {
+        effectiveTarget = hitTargetOverrides[hitId];
+      }
+      filteredMatches.push([start, end, { ...entry, target: effectiveTarget }]);
     }
   }
-  
-  console.log('[replaceText]', 'filteredMatches:', filteredMatches.length, 'of', matches.length);
   
   if (filteredMatches.length === 0) {
     return { text, hits: [], conflicts };

@@ -63,9 +63,10 @@
             <label><input type="checkbox" id="chkTermAll" checked /> 本词全选</label>
             <label><input type="checkbox" id="chkGlobalAll" checked /> 全部全选</label>
             <span id="targetSelectorWrap" class="target-selector-wrap" hidden>
-              <label>替换为：
+              <label>批量替换为：
                 <select id="targetSelect" class="target-select"></select>
               </label>
+              <button type="button" id="btnApplyTargetAll" class="btn-apply-target">应用到本词全部</button>
             </span>
           </div>
           <div class="diff-table-wrap">
@@ -76,7 +77,8 @@
                   <th>文件</th>
                   <th>句序</th>
                   <th>时间</th>
-                  <th>原文句</th>
+                  <th>替换为</th>
+                  <th>原文句（点击查看上下文）</th>
                 </tr>
               </thead>
               <tbody id="hitBody"></tbody>
@@ -115,7 +117,19 @@
       <div class="status" id="statusReplace"></div>
     </section>
   </main>
-  <script src="srt.js?v=3"></script>
+
+  <!-- 上下文预览 Modal -->
+  <div class="context-modal" id="contextModal" hidden>
+    <div class="context-modal-backdrop"></div>
+    <div class="context-modal-content">
+      <div class="context-modal-header">
+        <h3>上下文预览</h3>
+        <button type="button" id="btnCloseContext" class="context-close">×</button>
+      </div>
+      <div class="context-modal-body" id="contextBody"></div>
+    </div>
+  </div>
+  <script src="srt.js?v=4"></script>
   <script>
     let scanData = null;
     let selectedIds = new Set();
@@ -125,7 +139,8 @@
     let sourceType = null; // 'zip' | 'folder' | 'drop'
     let droppedSrtFiles = []; // files from drag-drop
     let multiTargetMap = {}; // source -> [target1, target2, ...]
-    let selectedTargets = {}; // source -> user-selected target
+    let hitTargetOverrides = {}; // hitId -> user-selected target (每个 hit 独立)
+    let allSubsByFile = {}; // { fileName: [subs] } 用于上下文查询
 
     const SOURCE_ALIASES = ['source', '中文', '原文', '源文', '词条', '术语', 'chinese', 'zh', '中文词条', '中文原文', '源'];
     const TARGET_ALIASES = ['target', '译文', '英文', '目标语', '翻译', 'english', 'en', '外语', '外文', '英文译名', '译名', '替换', '替换为', '替换内容', '目标文本', '目标'];
@@ -308,12 +323,10 @@
       if (targets && targets.length > 1) {
         wrap.hidden = false;
         select.innerHTML = '';
-        const currentTarget = selectedTargets[activeSource] || targets[0];
         targets.forEach(t => {
           const opt = document.createElement('option');
           opt.value = t;
           opt.textContent = t;
-          if (t === currentTarget) opt.selected = true;
           select.appendChild(opt);
         });
       } else {
@@ -321,22 +334,34 @@
       }
     }
 
-    document.getElementById('targetSelect').addEventListener('change', (e) => {
-      if (activeSource) {
-        selectedTargets[activeSource] = e.target.value;
-        renderHits();
-      }
+    // 批量应用到本词全部命中
+    document.getElementById('btnApplyTargetAll').addEventListener('click', () => {
+      const term = (scanData?.terms || []).find((t) => t.source === activeSource);
+      if (!term) return;
+      const target = document.getElementById('targetSelect').value;
+      term.hits.forEach(h => {
+        hitTargetOverrides[h.id] = target;
+      });
+      renderHits();
+      statusScan.className = 'status ok';
+      statusScan.textContent = `已将本词全部 ${term.hits.length} 处命中统一替换为：${target}`;
     });
 
     function renderHits() {
       const term = (scanData?.terms || []).find((t) => t.source === activeSource);
       hitBody.innerHTML = '';
       if (!term) return;
-      const effectiveTarget = selectedTargets[term.source] || term.target;
+
+      const hasMultiTargets = multiTargetMap[term.source] && multiTargetMap[term.source].length > 1;
+      const targets = hasMultiTargets ? multiTargetMap[term.source] : null;
+
       let allOn = true;
       term.hits.forEach((h) => {
         if (!selectedIds.has(h.id)) allOn = false;
         const tr = document.createElement('tr');
+        tr.className = 'hit-row';
+        tr.dataset.hitId = h.id;
+
         const ck = document.createElement('input');
         ck.type = 'checkbox';
         ck.checked = selectedIds.has(h.id);
@@ -349,13 +374,94 @@
           chkTermAll.checked = term.hits.every((x) => selectedIds.has(x.id));
           chkGlobalAll.checked = allHitIds().every((id) => selectedIds.has(id));
         };
+
+        // 替换为单元格
+        let targetCellHtml;
+        if (targets) {
+          const currentTarget = hitTargetOverrides[h.id] || h.target;
+          targetCellHtml = `<select class="hit-target-select" data-hit-id="${esc(h.id)}">` +
+            targets.map(t => `<option value="${esc(t)}" ${t === currentTarget ? 'selected' : ''}>${esc(t)}</option>`).join('') +
+            `</select>`;
+        } else {
+          targetCellHtml = `<span class="hit-target-fixed">${esc(h.target)}</span>`;
+        }
+
+        const effectiveTarget = targets ? (hitTargetOverrides[h.id] || h.target) : h.target;
         const highlighted = highlightHit(h.line_text, h.start, h.end, h.source, effectiveTarget);
+
         tr.innerHTML =
-          `<td></td><td>${esc(h.file)}</td><td>${h.line_no}</td><td>${esc(h.timecode)}</td><td>${highlighted}</td>`;
+          `<td></td><td>${esc(h.file)}</td><td>${h.line_no}</td><td>${esc(h.timecode)}</td><td class="target-cell">${targetCellHtml}</td><td class="text-cell">${highlighted}</td>`;
         tr.cells[0].appendChild(ck);
         hitBody.appendChild(tr);
+
+        // 行点击查看上下文（点击 select/checkbox 不触发）
+        tr.addEventListener('click', (e) => {
+          if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION') return;
+          showContextModal(h);
+        });
       });
+
+      // 每行 select 变化
+      hitBody.querySelectorAll('.hit-target-select').forEach(sel => {
+        sel.addEventListener('change', (e) => {
+          const hitId = e.target.dataset.hitId;
+          hitTargetOverrides[hitId] = e.target.value;
+          // 更新该行预览
+          const tr = e.target.closest('tr');
+          const h = term.hits.find(x => x.id === hitId);
+          if (h) {
+            const textCell = tr.querySelector('.text-cell');
+            textCell.innerHTML = highlightHit(h.line_text, h.start, h.end, h.source, e.target.value);
+          }
+        });
+      });
+
       chkTermAll.checked = allOn;
+    }
+
+    // 上下文 Modal
+    const contextModal = document.getElementById('contextModal');
+    const contextBody = document.getElementById('contextBody');
+    document.getElementById('btnCloseContext').addEventListener('click', () => contextModal.hidden = true);
+    contextModal.querySelector('.context-modal-backdrop').addEventListener('click', () => contextModal.hidden = true);
+
+    function showContextModal(h) {
+      const ctx = h.context || { before: [], after: [] };
+      const effectiveTarget = hitTargetOverrides[h.id] || h.target;
+
+      const renderLine = (item, isCurrent) => {
+        const cls = isCurrent ? 'ctx-line current' : 'ctx-line';
+        let textHtml;
+        if (isCurrent) {
+          textHtml = highlightHit(item.text, h.start, h.end, h.source, effectiveTarget);
+        } else {
+          textHtml = esc(item.text);
+        }
+        return `<div class="${cls}">
+          <span class="ctx-line-no">${item.line_no}</span>
+          <span class="ctx-time">${esc(item.timecode)}</span>
+          <span class="ctx-text">${textHtml}</span>
+        </div>`;
+      };
+
+      const beforeHtml = (ctx.before || []).map(b => renderLine(b, false)).join('');
+      const currentHtml = renderLine({ line_no: h.line_no, timecode: h.timecode, text: h.line_text }, true);
+      const afterHtml = (ctx.after || []).map(a => renderLine(a, false)).join('');
+
+      contextBody.innerHTML = `
+        <div class="ctx-file">${esc(h.file)} · 第 ${h.line_no} 条</div>
+        <div class="ctx-list">
+          ${beforeHtml}
+          ${currentHtml}
+          ${afterHtml}
+        </div>
+        <div class="ctx-legend">
+          <span class="hit-source">${esc(h.source)}</span>
+          <span class="hit-arrow">→</span>
+          <span class="hit-target">${esc(effectiveTarget)}</span>
+        </div>
+      `;
+      contextModal.hidden = false;
     }
 
     function highlightHit(text, start, end, source, target) {
@@ -402,42 +508,62 @@
       const g = glossary.files[0];
       if (!g) return alert('请上传本地化清单');
       if (!sourceType) return alert('请上传或拖入字幕（ZIP / 文件夹）');
-      
+
       statusScan.className = 'status';
       statusScan.textContent = '扫描中…';
       btnScan.disabled = true;
-      
+
       try {
         const glossResult = await loadGlossary(g);
         glossaryEntries = glossResult.entries;
         multiTargetMap = glossResult.multiTargetMap || {};
-        selectedTargets = {};
+        hitTargetOverrides = {};
+        allSubsByFile = {};
 
         await loadSubtitleFiles();
-        
+
         const terms = {};
         let totalHits = 0;
-        
+
         const limit = preview.checked ? 1 : subtitleFiles.length;
-        
+
         for (let i = 0; i < limit; i++) {
           const subFile = subtitleFiles[i];
           const subs = parseSrt(subFile.content);
           const outName = subFile.name.split('/').pop();
-          
+          allSubsByFile[outName] = subs;
+
           for (let j = 0; j < subs.length; j++) {
             const line = subs[j];
             if (!line.text || !line.text.trim()) continue;
-            
+
             const text = line.text.replace(/\n/g, ' ');
             const { hits } = scanTextHits(text, glossaryEntries);
-            
+
             const tc = formatTimecode(line.start);
-            
+
+            // 准备上下文（前后各 2 行）
+            const ctxBefore = [];
+            for (let k = Math.max(0, j - 2); k < j; k++) {
+              ctxBefore.push({
+                line_no: k + 1,
+                timecode: formatTimecode(subs[k].start),
+                text: (subs[k].text || '').replace(/\n/g, ' ')
+              });
+            }
+            const ctxAfter = [];
+            for (let k = j + 1; k < Math.min(subs.length, j + 3); k++) {
+              ctxAfter.push({
+                line_no: k + 1,
+                timecode: formatTimecode(subs[k].start),
+                text: (subs[k].text || '').replace(/\n/g, ' ')
+              });
+            }
+
             for (const h of hits) {
               const src = h.source;
               const bucket = terms[src] || { source: src, target: h.target, hits: [] };
-              
+
               bucket.hits.push({
                 id: `${outName}|${j + 1}|${h.start}|${h.end}|${src}`,
                 file: outName,
@@ -447,33 +573,34 @@
                 source: h.source,
                 target: h.target,
                 start: h.start,
-                end: h.end
+                end: h.end,
+                context: { before: ctxBefore, after: ctxAfter }
               });
-              
+
               totalHits++;
               terms[src] = bucket;
             }
           }
         }
-        
+
         const termList = Object.values(terms).sort((a, b) => {
           if (b.hits.length !== a.hits.length) return b.hits.length - a.hits.length;
           return b.source.length - a.source.length;
         });
-        
+
         scanData = {
           sheet_name: glossResult.sheetName,
           term_count: termList.length,
           hit_count: totalHits,
           terms: termList
         };
-        
+
         selectedIds = new Set(allHitIds());
         activeSource = scanData.terms[0]?.source || null;
 
         const multiCount = Object.keys(multiTargetMap).length;
         const multiHint = multiCount > 0
-          ? ` | <span style="color:#c7870f">⚠ ${multiCount} 个词有多个可选 Target，请点击词后在工具栏选择</span>`
+          ? ` | <span style="color:#c7870f">⚠ ${multiCount} 个词有多个可选 Target，可在每条命中行单独选择</span>`
           : '';
         scanSummary.innerHTML = `工作表: ${scanData.sheet_name} | ${scanData.term_count} 个词，${scanData.hit_count} 处命中${multiHint}`;
         scanLayout.hidden = !scanData.term_count;
@@ -481,7 +608,7 @@
         renderHits();
         updateTargetSelector();
         chkGlobalAll.checked = true;
-        
+
         statusScan.className = 'status ok';
         statusScan.textContent = '扫描完成，请勾选后执行替换';
       } catch (e) {
@@ -526,11 +653,8 @@
         const outputFiles = []; // for folder export
         const useFolderExport = exportFolder.checked;
 
-        // 构建带用户选择 Target 的有效词条
-        const effectiveEntries = glossaryEntries.map(e => {
-          const sel = selectedTargets[e.source];
-          return sel ? { ...e, target: sel } : e;
-        });
+        // 构建带用户选择 Target 的有效词条（仅作 Source 池，每个 hit 的 Target 由 hitTargetOverrides 覆盖）
+        const effectiveEntries = glossaryEntries;
 
         const limit = preview.checked ? 1 : subtitleFiles.length;
 
@@ -554,6 +678,7 @@
             const text = original.replace(/\n/g, ' ');
             const { text: replaced } = replaceText(text, effectiveEntries, {
               allowedHitIds: selectedIds,
+              hitTargetOverrides: hitTargetOverrides,
               fileName: originalName,
               lineIndex: j + 1
             });
