@@ -1424,6 +1424,37 @@ button.btn-secondary:hover:not(:disabled) {
   white-space: nowrap;
 }
 
+.target-cell-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 8rem;
+}
+
+.hit-target-custom {
+  padding: 0.2rem 0.35rem;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.8rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.hit-target-custom:focus {
+  outline: none;
+  border-color: var(--mint);
+  border-style: solid;
+  background: rgba(76, 175, 80, 0.05);
+}
+
+.hit-target-custom::placeholder {
+  color: var(--text-soft);
+  font-size: 0.75rem;
+}
+
 .text-cell {
   cursor: pointer;
 }

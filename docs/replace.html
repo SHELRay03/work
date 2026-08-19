@@ -375,18 +375,28 @@
           chkGlobalAll.checked = allHitIds().every((id) => selectedIds.has(id));
         };
 
-        // 替换为单元格
-        let targetCellHtml;
+        // 替换为单元格：select / 固定文本 + 自定义输入框
+        const selectTarget = hitTargetOverrides[h.id] || h.target;
+        let selectHtml;
         if (targets) {
-          const currentTarget = hitTargetOverrides[h.id] || h.target;
-          targetCellHtml = `<select class="hit-target-select" data-hit-id="${esc(h.id)}">` +
-            targets.map(t => `<option value="${esc(t)}" ${t === currentTarget ? 'selected' : ''}>${esc(t)}</option>`).join('') +
+          selectHtml = `<select class="hit-target-select" data-hit-id="${esc(h.id)}">` +
+            targets.map(t => `<option value="${esc(t)}" ${t === selectTarget ? 'selected' : ''}>${esc(t)}</option>`).join('') +
             `</select>`;
         } else {
-          targetCellHtml = `<span class="hit-target-fixed">${esc(h.target)}</span>`;
+          selectHtml = `<span class="hit-target-fixed">${esc(h.target)}</span>`;
         }
 
-        const effectiveTarget = targets ? (hitTargetOverrides[h.id] || h.target) : h.target;
+        // 自定义输入框：有值则覆盖 select 选择
+        const customValue = hitTargetOverrides[h.id] && !targets.includes(hitTargetOverrides[h.id])
+          ? hitTargetOverrides[h.id]
+          : '';
+        const inputHtml = `<input type="text" class="hit-target-custom" data-hit-id="${esc(h.id)}" 
+          placeholder="自定义…" value="${esc(customValue)}" title="输入自定义替换内容，留空则使用上方选择" />`;
+
+        targetCellHtml = `<div class="target-cell-wrap">${selectHtml}${inputHtml}</div>`;
+
+        // 实际生效的 Target：优先自定义输入框值，其次 select 选择，最后默认
+        const effectiveTarget = hitTargetOverrides[h.id] || h.target;
         const highlighted = highlightHit(h.line_text, h.start, h.end, h.source, effectiveTarget);
 
         tr.innerHTML =
@@ -394,7 +404,7 @@
         tr.cells[0].appendChild(ck);
         hitBody.appendChild(tr);
 
-        // 行点击查看上下文（点击 select/checkbox 不触发）
+        // 行点击查看上下文（点击 input/select/checkbox 不触发）
         tr.addEventListener('click', (e) => {
           if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION') return;
           showContextModal(h);
@@ -406,12 +416,44 @@
         sel.addEventListener('change', (e) => {
           const hitId = e.target.dataset.hitId;
           hitTargetOverrides[hitId] = e.target.value;
-          // 更新该行预览
+          // 清空自定义输入框
           const tr = e.target.closest('tr');
+          const customInput = tr.querySelector('.hit-target-custom');
+          if (customInput) customInput.value = '';
+          // 更新该行预览
           const h = term.hits.find(x => x.id === hitId);
           if (h) {
             const textCell = tr.querySelector('.text-cell');
             textCell.innerHTML = highlightHit(h.line_text, h.start, h.end, h.source, e.target.value);
+          }
+        });
+      });
+
+      // 每行自定义输入框变化
+      hitBody.querySelectorAll('.hit-target-custom').forEach(inp => {
+        inp.addEventListener('input', (e) => {
+          const hitId = e.target.dataset.hitId;
+          const val = e.target.value.trim();
+          if (val) {
+            hitTargetOverrides[hitId] = val;
+          } else {
+            // 输入框清空时回退到 select 当前值
+            const tr = e.target.closest('tr');
+            const sel = tr.querySelector('.hit-target-select');
+            if (sel) {
+              hitTargetOverrides[hitId] = sel.value;
+            } else {
+              const h = term.hits.find(x => x.id === hitId);
+              if (h) hitTargetOverrides[hitId] = h.target;
+            }
+          }
+          // 更新该行预览
+          const tr = e.target.closest('tr');
+          const h = term.hits.find(x => x.id === hitId);
+          if (h) {
+            const effectiveTarget = val || (tr.querySelector('.hit-target-select')?.value || h.target);
+            const textCell = tr.querySelector('.text-cell');
+            textCell.innerHTML = highlightHit(h.line_text, h.start, h.end, h.source, effectiveTarget);
           }
         });
       });
