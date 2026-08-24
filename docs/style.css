@@ -955,6 +955,22 @@ button.btn-secondary:hover:not(:disabled) {
   cursor: pointer;
 }
 
+/* 术语替换页：放大勾选框 + 仅原文句单元格可点击查看上下文 */
+.diff-table .hit-row input[type="checkbox"] {
+  width: 1.4rem;
+  height: 1.4rem;
+  accent-color: var(--mint-deep);
+  cursor: pointer;
+}
+
+.diff-table .hit-row .text-cell {
+  cursor: pointer;
+}
+
+.diff-table .hit-row .text-cell:hover {
+  background: rgba(94, 201, 160, 0.12);
+}
+
 /* ========== 行状态 ========== */
 .diff-table tr.row-selected {
   background: rgba(94, 201, 160, 0.15) !important;

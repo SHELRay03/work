@@ -151,7 +151,7 @@ A: 调整「最小频率」参数：
 - 单集内出现的词即使频率够高也可能不被识别，建议至少用 3 集以上字幕
 
 ### Q: 如何自定义停用词表？
-A: 编辑 [stopwords.json](file:///d:/subtitle-toolkit/docs/stopwords.json) 文件：
+A: 编辑 [stopwords.json](stopwords.json) 文件：
 - `groups.ancient.words` 添加通用停用词
 - `groups.ancient.prefixes` 添加称谓前缀
 - `groups.ancient.suffixes` 添加称谓后缀

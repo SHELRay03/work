@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=6" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
@@ -403,11 +403,14 @@
         tr.cells[0].appendChild(ck);
         hitBody.appendChild(tr);
 
-        // 行点击查看上下文（点击 input/select/checkbox 不触发）
-        tr.addEventListener('click', (e) => {
-          if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION') return;
-          showContextModal(h);
-        });
+        // 仅点击原文句单元格查看上下文（其他列不触发）
+        const textCell = tr.querySelector('.text-cell');
+        if (textCell) {
+          textCell.addEventListener('click', (e) => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION') return;
+            showContextModal(h);
+          });
+        }
       });
 
       // 每行 select 变化
