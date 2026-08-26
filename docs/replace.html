@@ -128,7 +128,7 @@
       <div class="context-modal-body" id="contextBody"></div>
     </div>
   </div>
-  <script src="srt.js?v=5"></script>
+  <script src="srt.js?v=6"></script>
   <script>
     let scanData = null;
     let selectedIds = new Set();
@@ -542,7 +542,10 @@
       } else {
         throw new Error('请选择或拖入字幕文件');
       }
-      
+
+      // 按文件名数字大小自然排序（ep1, ep2, ..., ep10）
+      subtitleFiles.sort((a, b) => naturalCompare(a.name, b.name));
+
       if (subtitleFiles.length === 0) {
         throw new Error('未找到 SRT 文件');
       }

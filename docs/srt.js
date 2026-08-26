@@ -568,7 +568,32 @@ function scanTextHits(text, entries) {
 }
 
 /**
+ * 自然顺序比较：数字按数值参与比较，避免 ep10 排在 ep2 前面
+ */
+function naturalCompare(a, b) {
+  const split = (s) => String(s).split(/(\d+)/).filter(x => x !== '');
+  const aa = split(a);
+  const bb = split(b);
+  for (let i = 0; i < Math.min(aa.length, bb.length); i++) {
+    const x = aa[i];
+    const y = bb[i];
+    const isNumX = /^\d+$/.test(x);
+    const isNumY = /^\d+$/.test(y);
+    if (isNumX && isNumY) {
+      const n = Number(x) - Number(y);
+      if (n !== 0) return n;
+    } else {
+      const lx = x.toLowerCase();
+      const ly = y.toLowerCase();
+      if (lx !== ly) return lx < ly ? -1 : 1;
+    }
+  }
+  return aa.length - bb.length;
+}
+
+/**
  * 从 FileList 中提取 SRT 文件（支持 webkitdirectory 选择文件夹）
+ * 按文件名数字大小自然排序（ep1, ep2, ..., ep10）
  */
 function extractSrtFromFileList(fileList) {
   const results = [];
@@ -579,6 +604,7 @@ function extractSrtFromFileList(fileList) {
       results.push({ name: relPath, file: file });
     }
   }
+  results.sort((a, b) => naturalCompare(a.name, b.name));
   return results;
 }
 
@@ -651,7 +677,9 @@ async function extractSrtFromDropEvent(event) {
       }
     }
   }
-  
+
+  // 按文件名数字大小自然排序（ep1, ep2, ..., ep10）
+  results.sort((a, b) => naturalCompare(a.name, b.name));
   return results;
 }
 

@@ -46,7 +46,7 @@
       <div class="status" id="statusFix"></div>
     </section>
   </main>
-  <script src="srt.js?v=3"></script>
+  <script src="srt.js?v=4"></script>
   <script>
     const btnFix = document.getElementById('btnFix');
     const statusFix = document.getElementById('statusFix');
@@ -141,7 +141,10 @@
       } else {
         throw new Error('请选择或拖入字幕文件');
       }
-      
+
+      // 按文件名数字大小自然排序（ep1, ep2, ..., ep10）
+      results.sort((a, b) => naturalCompare(a.name, b.name));
+
       if (results.length === 0) {
         throw new Error('未找到 SRT 文件');
       }
