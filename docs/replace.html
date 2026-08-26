@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="style.css?v=6" />
+  <link rel="stylesheet" href="style.css?v=7" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
@@ -35,8 +35,9 @@
         Source 列支持 <code>词A/词B</code> 或 <code>词A\词B</code> 拆成多条。ZIP 内任意子文件夹的 SRT 均可识别。
       </p>
       <div class="field">
-        <label>本地化清单 (.xlsx)</label>
-        <input type="file" id="glossary" accept=".xlsx,.xls" />
+        <label>本地化清单 (.xlsx，可多选以启用多语言模式)</label>
+        <input type="file" id="glossary" accept=".xlsx,.xls" multiple />
+        <ul id="glossaryList" class="glossary-list"></ul>
       </div>
       <div class="field">
         <label>字幕（ZIP 压缩包 或 直接拖入文件夹）</label>
@@ -71,7 +72,7 @@
           <div class="diff-table-wrap">
             <table class="diff-table">
               <thead>
-                <tr>
+                <tr id="hitHeadRow">
                   <th>选</th>
                   <th>文件</th>
                   <th>句序</th>
@@ -137,9 +138,21 @@
     let subtitleFiles = [];
     let sourceType = null; // 'zip' | 'folder' | 'drop'
     let droppedSrtFiles = []; // files from drag-drop
-    let multiTargetMap = {}; // source -> [target1, target2, ...]
-    let hitTargetOverrides = {}; // hitId -> user-selected target (每个 hit 独立)
+    let multiTargetMap = {}; // source -> [target1, target2, ...]  (单语言模式)
+    let hitTargetOverrides = {}; // hitId -> user-selected target (单语言模式)
     let allSubsByFile = {}; // { fileName: [subs] } 用于上下文查询
+
+    // 多语言模式状态
+    const LANG_OPTIONS = ['en', 'zh-CN', 'ja', 'ko', 'es', 'th', 'fr', 'de'];
+    const LANG_LABELS = {
+      'en': 'English', 'zh-CN': '简体中文', 'ja': '日本語', 'ko': '한국어',
+      'es': 'Español', 'th': 'ไทย', 'fr': 'Français', 'de': 'Deutsch'
+    };
+    let glossaryFiles = [];   // [{ file: File, lang: 'en' }]
+    let glossaryByLang = {}; // { en: entries[], ja: entries[] }
+    let langHitValue = {};   // { en: { [hitId]: 'target' } }，空串 = 跳过该语言
+    let multiLangMode = false;
+    let activeLangs = [];    // 当前激活的语言列表
 
     const SOURCE_ALIASES = ['source', '中文', '原文', '源文', '词条', '术语', 'chinese', 'zh', '中文词条', '中文原文', '源'];
     const TARGET_ALIASES = ['target', '译文', '英文', '目标语', '翻译', 'english', 'en', '外语', '外文', '英文译名', '译名', '替换', '替换为', '替换内容', '目标文本', '目标'];
@@ -149,9 +162,86 @@
     const dropZoneReplace = document.getElementById('dropZoneReplace');
     const exportFolder = document.getElementById('exportFolder');
     const folderNameWrap = document.getElementById('folderNameWrap');
+    const glossaryInput = document.getElementById('glossary');
+    const glossaryList = document.getElementById('glossaryList');
+    const langSuffixWrap = document.getElementById('langSuffix').closest('label');
 
     exportFolder.addEventListener('change', () => {
       folderNameWrap.hidden = !exportFolder.checked;
+    });
+
+    // 多语言术语表管理：每次添加新选中的 xlsx，每份绑定一个语言标签
+    function addGlossaryFiles(fileList) {
+      for (const f of fileList) {
+        const used = glossaryFiles.map(g => g.lang);
+        const lang = LANG_OPTIONS.find(l => !used.includes(l)) || LANG_OPTIONS[0];
+        glossaryFiles.push({ file: f, lang });
+      }
+      renderGlossaryList();
+    }
+
+    function removeGlossary(idx) {
+      glossaryFiles.splice(idx, 1);
+      renderGlossaryList();
+    }
+
+    function setGlossaryLang(idx, lang) {
+      if (glossaryFiles[idx]) {
+        glossaryFiles[idx].lang = lang;
+        renderGlossaryList();
+      }
+    }
+
+    function getActiveLangs() {
+      const seen = new Set();
+      const out = [];
+      for (const g of glossaryFiles) {
+        if (!seen.has(g.lang)) { seen.add(g.lang); out.push(g.lang); }
+      }
+      return out;
+    }
+
+    function renderGlossaryList() {
+      glossaryList.innerHTML = '';
+      glossaryFiles.forEach((g, idx) => {
+        const li = document.createElement('li');
+        li.className = 'glossary-item';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'glossary-name';
+        nameSpan.textContent = g.file.name;
+        nameSpan.title = g.file.name;
+
+        const langSelect = document.createElement('select');
+        langSelect.className = 'glossary-lang';
+        LANG_OPTIONS.forEach(l => {
+          const opt = document.createElement('option');
+          opt.value = l;
+          opt.textContent = `${l} · ${LANG_LABELS[l] || ''}`;
+          if (l === g.lang) opt.selected = true;
+          langSelect.appendChild(opt);
+        });
+        langSelect.onchange = () => setGlossaryLang(idx, langSelect.value);
+
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'glossary-remove';
+        removeBtn.textContent = '×';
+        removeBtn.title = '移除该术语表';
+        removeBtn.onclick = () => removeGlossary(idx);
+
+        li.appendChild(nameSpan);
+        li.appendChild(langSelect);
+        li.appendChild(removeBtn);
+        glossaryList.appendChild(li);
+      });
+    }
+
+    glossaryInput.addEventListener('change', (e) => {
+      if (e.target.files.length === 0) return;
+      addGlossaryFiles(e.target.files);
+      // 允许再次选择同名文件触发 change
+      e.target.value = '';
     });
 
     dropZoneReplace.addEventListener('click', (e) => {
@@ -347,6 +437,8 @@
     });
 
     function renderHits() {
+      // 多语言模式分发
+      if (multiLangMode) return renderHitsMulti();
       const term = (scanData?.terms || []).find((t) => t.source === activeSource);
       hitBody.innerHTML = '';
       if (!term) return;
@@ -552,10 +644,21 @@
     }
 
     btnScan.onclick = async () => {
-      const g = glossary.files[0];
-      if (!g) return alert('请上传本地化清单');
+      if (glossaryFiles.length === 0) return alert('请上传本地化清单');
       if (!sourceType) return alert('请上传或拖入字幕（ZIP / 文件夹）');
 
+      // 多语言模式判定：≥2 份术语表且至少 2 个不同语言
+      const langs = getActiveLangs();
+      multiLangMode = glossaryFiles.length >= 2 && langs.length >= 2;
+      activeLangs = multiLangMode ? langs : [];
+      if (langSuffixWrap) langSuffixWrap.hidden = multiLangMode;
+
+      if (multiLangMode) {
+        await scanMultiLanguage();
+        return;
+      }
+
+      const g = glossaryFiles[0]?.file;
       statusScan.className = 'status';
       statusScan.textContent = '扫描中…';
       btnScan.disabled = true;
@@ -666,6 +769,357 @@
       }
     };
 
+    // ===== 多语言模式：扫描 / 渲染 / 替换 =====
+    async function scanMultiLanguage() {
+      statusScan.className = 'status';
+      statusScan.textContent = '扫描中…';
+      btnScan.disabled = true;
+      try {
+        // 加载每个 glossary，按 lang 存入 glossaryByLang（同语言多份文件合并条目）
+        glossaryByLang = {};
+        for (const g of glossaryFiles) {
+          const r = await loadGlossary(g.file);
+          if (glossaryByLang[g.lang]) {
+            glossaryByLang[g.lang] = [...glossaryByLang[g.lang], ...r.entries];
+          } else {
+            glossaryByLang[g.lang] = r.entries;
+          }
+        }
+
+        langHitValue = {};
+        activeLangs.forEach(l => { langHitValue[l] = {}; });
+
+        hitTargetOverrides = {};
+        allSubsByFile = {};
+
+        await loadSubtitleFiles();
+
+        const terms = {};
+        let totalHits = 0;
+        const limit = preview.checked ? 1 : subtitleFiles.length;
+
+        for (let i = 0; i < limit; i++) {
+          const subFile = subtitleFiles[i];
+          const subs = parseSrt(subFile.content);
+          const outName = subFile.name.split('/').pop();
+          allSubsByFile[outName] = subs;
+
+          for (let j = 0; j < subs.length; j++) {
+            const line = subs[j];
+            if (!line.text || !line.text.trim()) continue;
+
+            const text = line.text.replace(/\n/g, ' ');
+            const tc = formatTimecode(line.start);
+
+            const ctxBefore = [];
+            for (let k = Math.max(0, j - 2); k < j; k++) {
+              ctxBefore.push({
+                line_no: k + 1,
+                timecode: formatTimecode(subs[k].start),
+                text: (subs[k].text || '').replace(/\n/g, ' ')
+              });
+            }
+            const ctxAfter = [];
+            for (let k = j + 1; k < Math.min(subs.length, j + 3); k++) {
+              ctxAfter.push({
+                line_no: k + 1,
+                timecode: formatTimecode(subs[k].start),
+                text: (subs[k].text || '').replace(/\n/g, ' ')
+              });
+            }
+
+            // 每语言独立扫描，按 hitId 合并
+            const mergedHits = {};
+            for (const lang of activeLangs) {
+              const { hits } = scanTextHits(text, glossaryByLang[lang]);
+              for (const h of hits) {
+                const id = `${outName}|${j + 1}|${h.start}|${h.end}|${h.source}`;
+                if (!mergedHits[id]) {
+                  mergedHits[id] = {
+                    id,
+                    file: outName,
+                    line_no: j + 1,
+                    timecode: tc,
+                    line_text: text,
+                    source: h.source,
+                    start: h.start,
+                    end: h.end,
+                    context: { before: ctxBefore, after: ctxAfter },
+                    targets: {}
+                  };
+                }
+                mergedHits[id].targets[lang] = h.target;
+                // 初始化 langHitValue：默认值 = glossary target
+                if (!(id in langHitValue[lang])) {
+                  langHitValue[lang][id] = h.target;
+                }
+              }
+            }
+
+            // 把合并后的 hit 按 source 聚合
+            for (const h of Object.values(mergedHits)) {
+              const src = h.source;
+              const bucket = terms[src] || { source: src, hits: [] };
+              bucket.hits.push(h);
+              totalHits++;
+              terms[src] = bucket;
+            }
+          }
+        }
+
+        const termList = Object.values(terms).sort((a, b) => {
+          if (b.hits.length !== a.hits.length) return b.hits.length - a.hits.length;
+          return b.source.length - a.source.length;
+        });
+
+        scanData = {
+          sheet_name: glossaryFiles.map(g => g.file.name).join(' + '),
+          term_count: termList.length,
+          hit_count: totalHits,
+          terms: termList
+        };
+
+        selectedIds = new Set(allHitIds());
+        activeSource = scanData.terms[0]?.source || null;
+
+        const langBadges = activeLangs.map(l => `<span class="lang-badge">${esc(l)}</span>`).join('');
+        scanSummary.innerHTML = `多语言模式 | ${scanData.term_count} 个词，${scanData.hit_count} 处命中 | <span class="lang-badge-row">${langBadges}</span>`;
+        scanLayout.hidden = !scanData.term_count;
+
+        renderTermList();
+        renderHitHeaderMulti();
+        renderHitsMulti();
+        // 多语言模式不显示单语言的"批量替换为"控件
+        document.getElementById('targetSelectorWrap').hidden = true;
+        chkGlobalAll.checked = true;
+
+        statusScan.className = 'status ok';
+        statusScan.textContent = `扫描完成：${activeLangs.length} 个语言，请勾选后执行替换`;
+      } catch (e) {
+        statusScan.className = 'status err';
+        statusScan.textContent = e.message;
+      } finally {
+        btnScan.disabled = false;
+      }
+    }
+
+    function renderHitHeaderMulti() {
+      const headRow = document.getElementById('hitHeadRow');
+      let html = '<th>选</th><th>文件</th><th>句序</th><th>时间</th><th>Source</th>';
+      for (const lang of activeLangs) {
+        html += `<th class="lang-th" title="${esc(LANG_LABELS[lang] || '')}">${esc(lang)}</th>`;
+      }
+      html += '<th>原文句（点击查看上下文）</th>';
+      headRow.innerHTML = html;
+    }
+
+    function renderHitsMulti() {
+      // 重置表头（用户切换 term 时保证表头一致）
+      renderHitHeaderMulti();
+      const term = (scanData?.terms || []).find((t) => t.source === activeSource);
+      hitBody.innerHTML = '';
+      if (!term) return;
+
+      let allOn = true;
+      term.hits.forEach((h) => {
+        if (!selectedIds.has(h.id)) allOn = false;
+        const tr = document.createElement('tr');
+        tr.className = 'hit-row';
+        tr.dataset.hitId = h.id;
+
+        const ck = document.createElement('input');
+        ck.type = 'checkbox';
+        ck.checked = selectedIds.has(h.id);
+        ck.onchange = () => {
+          if (ck.checked) selectedIds.add(h.id);
+          else selectedIds.delete(h.id);
+          chkTermAll.checked = term.hits.every((x) => selectedIds.has(x.id));
+          chkGlobalAll.checked = allHitIds().every((id) => selectedIds.has(id));
+        };
+
+        const sourceCellHtml = `<span class="hit-source">${esc(h.source)}</span>`;
+
+        const langCellsHtml = activeLangs.map(lang => {
+          const val = langHitValue[lang]?.[h.id];
+          if (val === undefined) {
+            // 该语言 glossary 未覆盖此 Source
+            return `<td class="lang-col lang-empty" title="该语言术语表未覆盖此 Source">—</td>`;
+          }
+          const v = esc(val || '');
+          return `<td class="lang-col"><input type="text" class="lang-target-input" data-hit-id="${esc(h.id)}" data-lang="${esc(lang)}" value="${v}" placeholder="—" title="留空 = 该语言跳过此 hit；编辑 = 用该值替换" /></td>`;
+        }).join('');
+
+        // 原文句高亮：用第一个非空 target 做 preview
+        const previewLang = activeLangs.find(l => langHitValue[l]?.[h.id] !== undefined && langHitValue[l][h.id] !== '') || activeLangs[0];
+        const previewTarget = langHitValue[previewLang]?.[h.id] || h.targets[previewLang] || '';
+        const highlighted = highlightHit(h.line_text, h.start, h.end, h.source, previewTarget);
+
+        tr.innerHTML =
+          `<td></td><td>${esc(h.file)}</td><td>${h.line_no}</td><td>${esc(h.timecode)}</td>` +
+          `<td>${sourceCellHtml}</td>${langCellsHtml}<td class="text-cell">${highlighted}</td>`;
+        tr.cells[0].appendChild(ck);
+        hitBody.appendChild(tr);
+
+        const textCell = tr.querySelector('.text-cell');
+        if (textCell) {
+          textCell.addEventListener('click', (e) => {
+            if (['INPUT', 'SELECT', 'OPTION'].includes(e.target.tagName)) return;
+            showContextModalMulti(h);
+          });
+        }
+      });
+
+      // 每语言 Target 输入框 input 事件
+      hitBody.querySelectorAll('.lang-target-input').forEach(inp => {
+        inp.addEventListener('input', (e) => {
+          const hitId = e.target.dataset.hitId;
+          const lang = e.target.dataset.lang;
+          if (!langHitValue[lang]) langHitValue[lang] = {};
+          langHitValue[lang][hitId] = e.target.value;
+        });
+      });
+
+      chkTermAll.checked = allOn;
+    }
+
+    function showContextModalMulti(h) {
+      const ctx = h.context || { before: [], after: [] };
+
+      const renderLine = (item, isCurrent) => {
+        const cls = isCurrent ? 'ctx-line current' : 'ctx-line';
+        let textHtml;
+        if (isCurrent) {
+          const pl = activeLangs.find(l => langHitValue[l]?.[h.id] !== undefined && langHitValue[l][h.id] !== '') || activeLangs[0];
+          const pt = langHitValue[pl]?.[h.id] || h.targets[pl] || '';
+          textHtml = highlightHit(item.text, h.start, h.end, h.source, pt);
+        } else {
+          textHtml = esc(item.text);
+        }
+        return `<div class="${cls}">
+          <span class="ctx-line-no">${item.line_no}</span>
+          <span class="ctx-time">${esc(item.timecode)}</span>
+          <span class="ctx-text">${textHtml}</span>
+        </div>`;
+      };
+
+      const beforeHtml = (ctx.before || []).map(b => renderLine(b, false)).join('');
+      const currentHtml = renderLine({ line_no: h.line_no, timecode: h.timecode, text: h.line_text }, true);
+      const afterHtml = (ctx.after || []).map(a => renderLine(a, false)).join('');
+
+      // 多语言 legend：列出每个语言的 (source → target) 状态
+      const legendHtml = activeLangs.map(lang => {
+        const v = langHitValue[lang]?.[h.id];
+        if (v === undefined) {
+          return `<div class="ctx-legend"><span class="lang-badge">${esc(lang)}</span> <span class="hit-source">${esc(h.source)}</span> <span class="hit-arrow">→</span> <span style="color:var(--text-soft)">未覆盖</span></div>`;
+        }
+        if (v === '') {
+          return `<div class="ctx-legend"><span class="lang-badge">${esc(lang)}</span> <span class="hit-source">${esc(h.source)}</span> <span class="hit-arrow">→</span> <span style="color:var(--text-soft)">跳过</span></div>`;
+        }
+        return `<div class="ctx-legend"><span class="lang-badge">${esc(lang)}</span> <span class="hit-source">${esc(h.source)}</span> <span class="hit-arrow">→</span> <span class="hit-target">${esc(v)}</span></div>`;
+      }).join('');
+
+      contextBody.innerHTML = `
+        <div class="ctx-file">${esc(h.file)} · 第 ${h.line_no} 条</div>
+        <div class="ctx-list">
+          ${beforeHtml}
+          ${currentHtml}
+          ${afterHtml}
+        </div>
+        <div class="ctx-legend-list">
+          ${legendHtml}
+        </div>
+      `;
+      contextModal.hidden = false;
+    }
+
+    async function replaceMulti() {
+      statusReplace.className = 'status';
+      statusReplace.textContent = '替换中…';
+      btnReplace.disabled = true;
+
+      try {
+        const outZip = new JSZip();
+        const outputFiles = [];
+        const useFolderExport = exportFolder.checked;
+        const rawFolderName = document.getElementById('folderName').value.trim();
+        const folderName = (rawFolderName || 'replaced').replace(/[\\/:*?"<>|]/g, '_');
+        const limit = preview.checked ? 1 : subtitleFiles.length;
+
+        for (const lang of activeLangs) {
+          const entries = glossaryByLang[lang];
+          const overrides = {};
+          const allowed = new Set();
+          for (const id of selectedIds) {
+            const v = langHitValue[lang]?.[id];
+            if (v === undefined) continue;  // 该语言未覆盖此 hit
+            if (v === '') continue;          // 用户清空 = 跳过该语言此 hit
+            allowed.add(id);
+            overrides[id] = v;
+          }
+
+          for (let i = 0; i < limit; i++) {
+            const subFile = subtitleFiles[i];
+            const subs = parseSrt(subFile.content);
+            const originalName = subFile.name.split('/').pop();
+            const outName = originalName;  // 多语言模式不加后缀，靠子文件夹区分
+
+            for (let j = 0; j < subs.length; j++) {
+              const line = subs[j];
+              if (!line.text) continue;
+
+              const original = line.text;
+              const text = original.replace(/\n/g, ' ');
+              const { text: replaced } = replaceText(text, entries, {
+                allowedHitIds: allowed,
+                hitTargetOverrides: overrides,
+                fileName: originalName,
+                lineIndex: j + 1
+              });
+              line.text = replaced;
+            }
+
+            if (alsoFix.checked) {
+              for (const line of subs) {
+                if (line.text) {
+                  line.text = line.text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                  const parts = line.text.split('\n').map(p => p.trim()).filter(p => p);
+                  line.text = parts.join('\n');
+                }
+                if (line.end <= line.start) {
+                  line.end = line.start + 2000;
+                }
+              }
+            }
+
+            const outContent = generateSrt(subs);
+            const zipRelPath = `${folderName}/${lang}/${outName}`;
+            outZip.file(zipRelPath, outContent);
+            outputFiles.push({ path: `${lang}/${outName}`, content: outContent });
+          }
+        }
+
+        if (useFolderExport) {
+          if (!window.showDirectoryPicker) {
+            throw new Error('当前浏览器不支持文件夹导出，请使用 Chrome/Edge，或取消勾选"导出为文件夹"');
+          }
+          const result = await saveFilesToFolder(outputFiles);
+          if (!result.success) throw new Error(result.message);
+          statusReplace.className = 'status ok';
+          statusReplace.textContent = `${result.message}（位于所选目录的 ${activeLangs.map(l => folderName + '/' + l).join('、')} 等子文件夹内）`;
+        } else {
+          const blob = await outZip.generateAsync({ type: 'blob' });
+          downloadBlob(blob, 'replace_result_multi.zip');
+          statusReplace.className = 'status ok';
+          statusReplace.textContent = `已完成，下载已开始（${activeLangs.length} 个语言，位于 ${folderName}/<lang>/ 内）`;
+        }
+      } catch (e) {
+        statusReplace.className = 'status err';
+        statusReplace.textContent = e.message;
+      } finally {
+        btnReplace.disabled = false;
+      }
+    }
+
     chkTermAll.onchange = () => {
       const term = (scanData?.terms || []).find((t) => t.source === activeSource);
       if (!term) return;
@@ -686,7 +1140,13 @@
     };
 
     btnReplace.onclick = async () => {
-      const g = glossary.files[0];
+      if (multiLangMode) {
+        if (glossaryFiles.length === 0) return alert('请上传本地化清单');
+        if (!sourceType || subtitleFiles.length === 0) return alert('请先扫描字幕');
+        if (scanData && selectedIds.size === 0) return alert('请至少勾选一处替换');
+        return replaceMulti();
+      }
+      const g = glossaryFiles[0]?.file;
       if (!g) return alert('请上传本地化清单');
       if (!sourceType || subtitleFiles.length === 0) return alert('请先扫描字幕');
       if (scanData && selectedIds.size === 0) return alert('请至少勾选一处替换');
