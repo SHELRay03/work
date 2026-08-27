@@ -94,7 +94,7 @@
         <label><input type="checkbox" id="preview" /> 预览（仅第一集）</label>
         <label><input type="checkbox" id="alsoFix" checked /> 替换后 SRT 规范化</label>
         <label><input type="checkbox" id="exportFolder" /> 导出为文件夹（需 Chrome/Edge）</label>
-        <label id="folderNameWrap" hidden>文件夹名称：
+        <label id="folderNameWrap" hidden>统一父文件夹名：
           <input type="text" id="folderName" class="folder-name-input" placeholder="replaced" />
         </label>
         <label>输出后缀：
@@ -111,6 +111,7 @@
           </select>
         </label>
       </div>
+      <div id="outputFolderConfigs" class="output-configs"></div>
       <div class="actions">
         <button type="button" id="btnReplace">按勾选开始替换</button>
       </div>
@@ -148,9 +149,10 @@
       'en': 'English', 'zh-CN': '简体中文', 'ja': '日本語', 'ko': '한국어',
       'es': 'Español', 'th': 'ไทย', 'fr': 'Français', 'de': 'Deutsch'
     };
-    let glossaryFiles = [];   // [{ file: File, lang: 'en' }]
-    let glossaryByLang = {}; // { en: entries[], ja: entries[] }
-    let langHitValue = {};   // { en: { [hitId]: 'target' } }，空串 = 跳过该语言
+    let glossaryFiles = [];   // [{ file: File, lang: 'en', outputFolder: 'en' }]
+    let glossaryByLang = {}; // { en: entries[], ja: entries[] } — 扫描用，按语言合并
+    let glossaryEntriesByIndex = []; // [entries] — 替换用，每个术语表独立
+    let langHitValue = {};   // { en: { [hitId]: 'target' } }
     let multiLangMode = false;
     let activeLangs = [];    // 当前激活的语言列表
 
@@ -167,29 +169,97 @@
     const langSuffixWrap = document.getElementById('langSuffix').closest('label');
 
     exportFolder.addEventListener('change', () => {
-      folderNameWrap.hidden = !exportFolder.checked;
+      // 多语言模式下，父文件夹名可选（留空 = 直接输出各子文件夹）
+      if (multiLangMode) {
+        folderNameWrap.hidden = false;
+      } else {
+        folderNameWrap.hidden = !exportFolder.checked;
+      }
     });
 
-    // 多语言术语表管理：每次添加新选中的 xlsx，每份绑定一个语言标签
+    // 多语言术语表管理：每份绑定语言标签 + 输出文件夹名
     function addGlossaryFiles(fileList) {
       for (const f of fileList) {
         const used = glossaryFiles.map(g => g.lang);
         const lang = LANG_OPTIONS.find(l => !used.includes(l)) || LANG_OPTIONS[0];
-        glossaryFiles.push({ file: f, lang });
+        glossaryFiles.push({ file: f, lang, outputFolder: lang });
       }
       renderGlossaryList();
+      renderOutputFolderConfigs();
     }
 
     function removeGlossary(idx) {
       glossaryFiles.splice(idx, 1);
       renderGlossaryList();
+      renderOutputFolderConfigs();
     }
 
     function setGlossaryLang(idx, lang) {
       if (glossaryFiles[idx]) {
         glossaryFiles[idx].lang = lang;
+        if (!glossaryFiles[idx]._folderCustom) glossaryFiles[idx].outputFolder = lang;
         renderGlossaryList();
+        renderOutputFolderConfigs();
       }
+    }
+
+    function setGlossaryOutputFolder(idx, val) {
+      if (glossaryFiles[idx]) {
+        const trimmed = val.trim();
+        if (trimmed) {
+          glossaryFiles[idx].outputFolder = trimmed;
+          glossaryFiles[idx]._folderCustom = true;
+        } else {
+          glossaryFiles[idx].outputFolder = glossaryFiles[idx].lang;
+          glossaryFiles[idx]._folderCustom = false;
+        }
+      }
+    }
+
+    function renderOutputFolderConfigs() {
+      const container = document.getElementById('outputFolderConfigs');
+      if (!container) return;
+      container.innerHTML = '';
+
+      if (glossaryFiles.length < 2) {
+        container.hidden = true;
+        return;
+      }
+
+      container.hidden = false;
+      const tip = document.createElement('div');
+      tip.className = 'output-config-tip';
+      tip.textContent = '每个术语表独立输出到自定义文件夹（文件名保持不变）：';
+      container.appendChild(tip);
+
+      glossaryFiles.forEach((g, idx) => {
+        const row = document.createElement('div');
+        row.className = 'output-config-row';
+
+        const label = document.createElement('span');
+        label.className = 'output-config-label';
+        label.textContent = g.file.name;
+        label.title = g.file.name;
+
+        const langTag = document.createElement('span');
+        langTag.className = 'output-config-lang';
+        langTag.textContent = g.lang;
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'output-config-input';
+        input.value = g.outputFolder || g.lang;
+        input.placeholder = '文件夹名';
+        input.title = '替换后输出到此文件夹';
+        input.onchange = () => {
+          setGlossaryOutputFolder(idx, input.value);
+        };
+
+        row.appendChild(label);
+        row.appendChild(langTag);
+        row.appendChild(input);
+        container.appendChild(row);
+      });
     }
 
     function getActiveLangs() {
@@ -775,10 +845,12 @@
       statusScan.textContent = '扫描中…';
       btnScan.disabled = true;
       try {
-        // 加载每个 glossary，按 lang 存入 glossaryByLang（同语言多份文件合并条目）
+        // 加载每个 glossary：独立存储 + 按语言合并（同语言多份文件合并条目用于扫描）
+        glossaryEntriesByIndex = [];
         glossaryByLang = {};
         for (const g of glossaryFiles) {
           const r = await loadGlossary(g.file);
+          glossaryEntriesByIndex.push(r.entries);
           if (glossaryByLang[g.lang]) {
             glossaryByLang[g.lang] = [...glossaryByLang[g.lang], ...r.entries];
           } else {
@@ -1042,17 +1114,20 @@
         const outputFiles = [];
         const useFolderExport = exportFolder.checked;
         const rawFolderName = document.getElementById('folderName').value.trim();
-        const folderName = (rawFolderName || 'replaced').replace(/[\\/:*?"<>|]/g, '_');
+        const parentFolder = rawFolderName ? rawFolderName.replace(/[\\/:*?"<>|]/g, '_') : '';
         const limit = preview.checked ? 1 : subtitleFiles.length;
 
-        for (const lang of activeLangs) {
-          const entries = glossaryByLang[lang];
+        for (let gi = 0; gi < glossaryFiles.length; gi++) {
+          const g = glossaryFiles[gi];
+          const entries = glossaryEntriesByIndex[gi];
+          const outputFolder = (g.outputFolder || g.lang).replace(/[\\/:*?"<>|]/g, '_');
+
           const overrides = {};
           const allowed = new Set();
           for (const id of selectedIds) {
-            const v = langHitValue[lang]?.[id];
-            if (v === undefined) continue;  // 该语言未覆盖此 hit
-            if (v === '') continue;          // 用户清空 = 跳过该语言此 hit
+            const v = langHitValue[g.lang]?.[id];
+            if (v === undefined) continue;
+            if (v === '') continue;
             allowed.add(id);
             overrides[id] = v;
           }
@@ -1061,7 +1136,6 @@
             const subFile = subtitleFiles[i];
             const subs = parseSrt(subFile.content);
             const originalName = subFile.name.split('/').pop();
-            const outName = originalName;  // 多语言模式不加后缀，靠子文件夹区分
 
             for (let j = 0; j < subs.length; j++) {
               const line = subs[j];
@@ -1092,9 +1166,11 @@
             }
 
             const outContent = generateSrt(subs);
-            const zipRelPath = `${folderName}/${lang}/${outName}`;
-            outZip.file(zipRelPath, outContent);
-            outputFiles.push({ path: `${lang}/${outName}`, content: outContent });
+            const relPath = parentFolder
+              ? `${parentFolder}/${outputFolder}/${originalName}`
+              : `${outputFolder}/${originalName}`;
+            outZip.file(relPath, outContent);
+            outputFiles.push({ path: relPath, content: outContent });
           }
         }
 
@@ -1105,12 +1181,13 @@
           const result = await saveFilesToFolder(outputFiles);
           if (!result.success) throw new Error(result.message);
           statusReplace.className = 'status ok';
-          statusReplace.textContent = `${result.message}（位于所选目录的 ${activeLangs.map(l => folderName + '/' + l).join('、')} 等子文件夹内）`;
+          const folderList = glossaryFiles.map(g => (g.outputFolder || g.lang)).join('、');
+          statusReplace.textContent = `${result.message}（${glossaryFiles.length} 个术语表输出：${folderList}）`;
         } else {
           const blob = await outZip.generateAsync({ type: 'blob' });
           downloadBlob(blob, 'replace_result_multi.zip');
           statusReplace.className = 'status ok';
-          statusReplace.textContent = `已完成，下载已开始（${activeLangs.length} 个语言，位于 ${folderName}/<lang>/ 内）`;
+          statusReplace.textContent = `已完成，下载已开始（${glossaryFiles.length} 个术语表，各输出到自定义文件夹）`;
         }
       } catch (e) {
         statusReplace.className = 'status err';
@@ -1144,6 +1221,8 @@
         if (glossaryFiles.length === 0) return alert('请上传本地化清单');
         if (!sourceType || subtitleFiles.length === 0) return alert('请先扫描字幕');
         if (scanData && selectedIds.size === 0) return alert('请至少勾选一处替换');
+        // 刷新输出配置（以防术语表列表有变更）
+        renderOutputFolderConfigs();
         return replaceMulti();
       }
       const g = glossaryFiles[0]?.file;
