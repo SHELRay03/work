@@ -94,10 +94,7 @@
         <label><input type="checkbox" id="preview" /> 预览（仅第一集）</label>
         <label><input type="checkbox" id="alsoFix" checked /> 替换后 SRT 规范化</label>
         <label><input type="checkbox" id="exportFolder" /> 导出为文件夹（需 Chrome/Edge）</label>
-        <label id="folderNameWrap" hidden>统一父文件夹名：
-          <input type="text" id="folderName" class="folder-name-input" placeholder="replaced" />
-        </label>
-        <label>输出后缀：
+        <label>统一输出后缀：
           <select id="langSuffix" class="scene-select">
             <option value="">不添加</option>
             <option value=".zh_cn">.zh_cn（简体中文）</option>
@@ -113,7 +110,7 @@
       </div>
       <div id="outputFolderConfigs" class="output-configs"></div>
       <div class="actions">
-        <button type="button" id="btnReplace">按勾选开始替换</button>
+        <button type="button" id="btnReplace" class="btn-all-replace">按勾选替换全部</button>
       </div>
       <div class="status" id="statusReplace"></div>
     </section>
@@ -163,18 +160,15 @@
     const subsReplaceFolder = document.getElementById('subsReplaceFolder');
     const dropZoneReplace = document.getElementById('dropZoneReplace');
     const exportFolder = document.getElementById('exportFolder');
-    const folderNameWrap = document.getElementById('folderNameWrap');
     const glossaryInput = document.getElementById('glossary');
     const glossaryList = document.getElementById('glossaryList');
-    const langSuffixWrap = document.getElementById('langSuffix').closest('label');
+
+    // 单语言模式下显示全局状态
+    const statusReplace = document.getElementById('statusReplace');
 
     exportFolder.addEventListener('change', () => {
-      // 多语言模式下，父文件夹名可选（留空 = 直接输出各子文件夹）
-      if (multiLangMode) {
-        folderNameWrap.hidden = false;
-      } else {
-        folderNameWrap.hidden = !exportFolder.checked;
-      }
+      // 多语言模式下无需特殊处理，每行独立
+      // 单语言模式下仍使用 exportFolder 的 checked 状态
     });
 
     // 多语言术语表管理：每份绑定语言标签 + 输出文件夹名
@@ -229,12 +223,13 @@
       container.hidden = false;
       const tip = document.createElement('div');
       tip.className = 'output-config-tip';
-      tip.textContent = '每个术语表独立输出到自定义文件夹（文件名保持不变）：';
+      tip.textContent = '每个术语表独立配置输出文件夹，点击行内按钮单独替换导出：';
       container.appendChild(tip);
 
       glossaryFiles.forEach((g, idx) => {
         const row = document.createElement('div');
         row.className = 'output-config-row';
+        row.dataset.rowIdx = idx;
 
         const label = document.createElement('span');
         label.className = 'output-config-label';
@@ -255,9 +250,22 @@
           setGlossaryOutputFolder(idx, input.value);
         };
 
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'row-replace-btn';
+        btn.textContent = '替换';
+        btn.title = `使用此术语表替换并导出`;
+        btn.onclick = () => replaceSingleGlossary(idx);
+
+        const status = document.createElement('span');
+        status.className = 'row-status';
+        status.textContent = '';
+
         row.appendChild(label);
         row.appendChild(langTag);
         row.appendChild(input);
+        row.appendChild(btn);
+        row.appendChild(status);
         container.appendChild(row);
       });
     }
@@ -721,7 +729,6 @@
       const langs = getActiveLangs();
       multiLangMode = glossaryFiles.length >= 2 && langs.length >= 2;
       activeLangs = multiLangMode ? langs : [];
-      if (langSuffixWrap) langSuffixWrap.hidden = multiLangMode;
 
       if (multiLangMode) {
         await scanMultiLanguage();
@@ -1104,74 +1111,85 @@
       contextModal.hidden = false;
     }
 
-    async function replaceMulti() {
-      statusReplace.className = 'status';
-      statusReplace.textContent = '替换中…';
-      btnReplace.disabled = true;
+    async function replaceSingleGlossary(gi) {
+      const g = glossaryFiles[gi];
+      const entries = glossaryEntriesByIndex[gi];
+      const rowEl = document.querySelector(`[data-row-idx="${gi}"]`);
+      const statusEl = rowEl?.querySelector('.row-status');
+      const btnEl = rowEl?.querySelector('.row-replace-btn');
+
+      if (!g || !entries?.length) return;
+
+      // 检查该术语表是否有选中的命中
+      const availableHits = Object.entries(langHitValue[g.lang] || {}).filter(([id, v]) =>
+        selectedIds.has(id) && v !== undefined && v !== ''
+      );
+      if (availableHits.length === 0) {
+        alert(`「${g.file.name}」没有已勾选的替换项。请先扫描并勾选要替换的命中。`);
+        return;
+      }
+
+      if (statusEl) { statusEl.className = 'row-status'; statusEl.textContent = '替换中…'; }
+      if (btnEl) btnEl.disabled = true;
 
       try {
-        const outZip = new JSZip();
-        const outputFiles = [];
+        const outputFolder = (g.outputFolder || g.lang).replace(/[\\/:*?"<>|]/g, '_');
+        const suffix = document.getElementById('langSuffix').value;
         const useFolderExport = exportFolder.checked;
-        const rawFolderName = document.getElementById('folderName').value.trim();
-        const parentFolder = rawFolderName ? rawFolderName.replace(/[\\/:*?"<>|]/g, '_') : '';
         const limit = preview.checked ? 1 : subtitleFiles.length;
 
-        for (let gi = 0; gi < glossaryFiles.length; gi++) {
-          const g = glossaryFiles[gi];
-          const entries = glossaryEntriesByIndex[gi];
-          const outputFolder = (g.outputFolder || g.lang).replace(/[\\/:*?"<>|]/g, '_');
+        const overrides = {};
+        const allowed = new Set();
+        for (const id of selectedIds) {
+          const v = langHitValue[g.lang]?.[id];
+          if (v === undefined) continue;
+          if (v === '') continue;
+          allowed.add(id);
+          overrides[id] = v;
+        }
 
-          const overrides = {};
-          const allowed = new Set();
-          for (const id of selectedIds) {
-            const v = langHitValue[g.lang]?.[id];
-            if (v === undefined) continue;
-            if (v === '') continue;
-            allowed.add(id);
-            overrides[id] = v;
+        const outZip = new JSZip();
+        const outputFiles = [];
+
+        for (let i = 0; i < limit; i++) {
+          const subFile = subtitleFiles[i];
+          const subs = parseSrt(subFile.content);
+          const originalName = subFile.name.split('/').pop();
+          const baseName = originalName.replace(/\.srt$/i, '');
+          const outName = suffix ? `${baseName}${suffix}.srt` : originalName;
+
+          for (let j = 0; j < subs.length; j++) {
+            const line = subs[j];
+            if (!line.text) continue;
+
+            const original = line.text;
+            const text = original.replace(/\n/g, ' ');
+            const { text: replaced } = replaceText(text, entries, {
+              allowedHitIds: allowed,
+              hitTargetOverrides: overrides,
+              fileName: originalName,
+              lineIndex: j + 1
+            });
+            line.text = replaced;
           }
 
-          for (let i = 0; i < limit; i++) {
-            const subFile = subtitleFiles[i];
-            const subs = parseSrt(subFile.content);
-            const originalName = subFile.name.split('/').pop();
-
-            for (let j = 0; j < subs.length; j++) {
-              const line = subs[j];
-              if (!line.text) continue;
-
-              const original = line.text;
-              const text = original.replace(/\n/g, ' ');
-              const { text: replaced } = replaceText(text, entries, {
-                allowedHitIds: allowed,
-                hitTargetOverrides: overrides,
-                fileName: originalName,
-                lineIndex: j + 1
-              });
-              line.text = replaced;
-            }
-
-            if (alsoFix.checked) {
-              for (const line of subs) {
-                if (line.text) {
-                  line.text = line.text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-                  const parts = line.text.split('\n').map(p => p.trim()).filter(p => p);
-                  line.text = parts.join('\n');
-                }
-                if (line.end <= line.start) {
-                  line.end = line.start + 2000;
-                }
+          if (alsoFix.checked) {
+            for (const line of subs) {
+              if (line.text) {
+                line.text = line.text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                const parts = line.text.split('\n').map(p => p.trim()).filter(p => p);
+                line.text = parts.join('\n');
+              }
+              if (line.end <= line.start) {
+                line.end = line.start + 2000;
               }
             }
-
-            const outContent = generateSrt(subs);
-            const relPath = parentFolder
-              ? `${parentFolder}/${outputFolder}/${originalName}`
-              : `${outputFolder}/${originalName}`;
-            outZip.file(relPath, outContent);
-            outputFiles.push({ path: relPath, content: outContent });
           }
+
+          const outContent = generateSrt(subs);
+          const relPath = `${outputFolder}/${outName}`;
+          outZip.file(relPath, outContent);
+          outputFiles.push({ path: relPath, content: outContent });
         }
 
         if (useFolderExport) {
@@ -1180,20 +1198,40 @@
           }
           const result = await saveFilesToFolder(outputFiles);
           if (!result.success) throw new Error(result.message);
-          statusReplace.className = 'status ok';
-          const folderList = glossaryFiles.map(g => (g.outputFolder || g.lang)).join('、');
-          statusReplace.textContent = `${result.message}（${glossaryFiles.length} 个术语表输出：${folderList}）`;
+          if (statusEl) {
+            statusEl.className = 'row-status ok';
+            statusEl.textContent = `✓ 已导出到 ${outputFolder}/`;
+          }
         } else {
           const blob = await outZip.generateAsync({ type: 'blob' });
-          downloadBlob(blob, 'replace_result_multi.zip');
-          statusReplace.className = 'status ok';
-          statusReplace.textContent = `已完成，下载已开始（${glossaryFiles.length} 个术语表，各输出到自定义文件夹）`;
+          downloadBlob(blob, `${outputFolder}_replace.zip`);
+          if (statusEl) {
+            statusEl.className = 'row-status ok';
+            statusEl.textContent = `✓ 已下载 ${outputFolder}_replace.zip`;
+          }
         }
       } catch (e) {
-        statusReplace.className = 'status err';
-        statusReplace.textContent = e.message;
+        if (statusEl) { statusEl.className = 'row-status err'; statusEl.textContent = '✗ ' + e.message; }
       } finally {
-        btnReplace.disabled = false;
+        if (btnEl) btnEl.disabled = false;
+      }
+    }
+
+    async function replaceAllGlossaries() {
+      if (glossaryFiles.length === 0) return alert('请上传本地化清单');
+      if (!sourceType || subtitleFiles.length === 0) return alert('请先扫描字幕');
+      if (scanData && selectedIds.size === 0) return alert('请至少勾选一处替换');
+
+      renderOutputFolderConfigs();
+
+      // 逐个术语表替换（串行，避免多个 showDirectoryPicker 冲突）
+      for (let gi = 0; gi < glossaryFiles.length; gi++) {
+        const g = glossaryFiles[gi];
+        const availableHits = Object.entries(langHitValue[g.lang] || {}).filter(([id, v]) =>
+          selectedIds.has(id) && v !== undefined && v !== ''
+        );
+        if (availableHits.length === 0) continue;
+        await replaceSingleGlossary(gi);
       }
     }
 
@@ -1221,9 +1259,7 @@
         if (glossaryFiles.length === 0) return alert('请上传本地化清单');
         if (!sourceType || subtitleFiles.length === 0) return alert('请先扫描字幕');
         if (scanData && selectedIds.size === 0) return alert('请至少勾选一处替换');
-        // 刷新输出配置（以防术语表列表有变更）
-        renderOutputFolderConfigs();
-        return replaceMulti();
+        return replaceAllGlossaries();
       }
       const g = glossaryFiles[0]?.file;
       if (!g) return alert('请上传本地化清单');
@@ -1236,17 +1272,15 @@
       
       try {
         const outZip = new JSZip();
-        const outputFiles = []; // for folder export
+        const outputFiles = [];
         const useFolderExport = exportFolder.checked;
 
-        // 构建带用户选择 Target 的有效词条（仅作 Source 池，每个 hit 的 Target 由 hitTargetOverrides 覆盖）
         const effectiveEntries = glossaryEntries;
 
         const limit = preview.checked ? 1 : subtitleFiles.length;
 
         const suffix = document.getElementById('langSuffix').value;
-        const rawFolderName = document.getElementById('folderName').value.trim();
-        const folderName = (rawFolderName || 'replaced').replace(/[\\/:*?"<>|]/g, '_');
+        const folderName = 'replaced';
 
         for (let i = 0; i < limit; i++) {
           const subFile = subtitleFiles[i];
