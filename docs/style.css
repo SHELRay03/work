@@ -1449,51 +1449,6 @@ button.btn-secondary:hover:not(:disabled) {
   font-style: italic;
 }
 
-.row-replace-btn {
-  padding: 0.2rem 0.7rem;
-  border: 1px solid var(--mint-deep);
-  border-radius: var(--radius);
-  background: var(--mint);
-  color: white;
-  font-family: inherit;
-  font-size: 0.75rem;
-  cursor: pointer;
-  transition: background 0.15s, transform 0.1s;
-  white-space: nowrap;
-}
-
-.row-replace-btn:hover:not(:disabled) {
-  background: var(--mint-deep);
-}
-
-.row-replace-btn:active:not(:disabled) {
-  transform: scale(0.97);
-}
-
-.row-replace-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.row-status {
-  font-size: 0.72rem;
-  min-width: 8rem;
-  text-align: right;
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.row-status.ok {
-  color: var(--mint-deep);
-  font-weight: 500;
-}
-
-.row-status.err {
-  color: var(--danger);
-}
-
 .btn-all-replace {
   width: 100%;
   padding: 0.55rem 1rem;
