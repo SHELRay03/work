@@ -215,7 +215,7 @@
       if (!container) return;
       container.innerHTML = '';
 
-      if (glossaryFiles.length < 2) {
+      if (glossaryFiles.length < 1) {
         container.hidden = true;
         return;
       }
@@ -223,7 +223,9 @@
       container.hidden = false;
       const tip = document.createElement('div');
       tip.className = 'output-config-tip';
-      tip.textContent = '每个术语表输出到自定义文件夹，统一点击下方按钮批量替换导出：';
+      tip.textContent = glossaryFiles.length > 1
+        ? '每个术语表输出到自定义文件夹，统一点击下方按钮批量替换导出：'
+        : '替换后输出到自定义文件夹：';
       container.appendChild(tip);
 
       glossaryFiles.forEach((g, idx) => {
@@ -1246,7 +1248,7 @@
         const limit = preview.checked ? 1 : subtitleFiles.length;
 
         const suffix = document.getElementById('langSuffix').value;
-        const folderName = 'replaced';
+        const folderName = (glossaryFiles[0]?.outputFolder || 'replaced').replace(/[\\/:*?"<>|]/g, '_');
 
         for (let i = 0; i < limit; i++) {
           const subFile = subtitleFiles[i];
