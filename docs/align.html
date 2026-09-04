@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="style.css?v=7" />
+  <link rel="stylesheet" href="style.css?v=8" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="srt.js"></script>
 </head>
@@ -28,6 +28,7 @@
       <a href="identify.html">术语识别</a>
       <a href="fix.html">SRT 修复</a>
       <a href="align.html" class="active">跨语言对齐</a>
+      <a href="flatten.html">目录平铺</a>
     </nav>
   </header>
 
@@ -429,9 +430,11 @@ btnScanAlign.addEventListener('click', async () => {
 
     const totalPairs = [];
 
+    let totalSkipped = 0;
     for (let ti = 0; ti < state.targets.length; ti++) {
       const t = state.targets[ti];
-      const pairs = alignOneTarget(state.srcFiles, state.srcHits, t);
+      const { pairs, skippedSrc, skippedTgt } = alignOneTarget(state.srcFiles, state.srcHits, t);
+      totalSkipped += skippedSrc + skippedTgt;
       pairs.forEach((p, idx) => {
         p.id = `${ti}_${idx}`;
         state.keepMap.set(p.id, true); // 默认保留
@@ -446,12 +449,13 @@ btnScanAlign.addEventListener('click', async () => {
 
     if (totalPairs.length === 0) {
       statusAlign.className = 'status';
-      statusAlign.textContent = '未找到任何可自动配对的命中。请检查：①文件名是否自然排序后能一一对应 ②搜索术语是否正确';
+      statusAlign.textContent = '未找到任何可自动配对的命中。请检查：①文件名数字是否能一一对应 ②搜索术语是否正确';
     } else {
       const keepCount = totalPairs.filter(p => state.keepMap.get(p.id)).length;
       pairSummary.textContent = `共 ${totalPairs.length} 对自动配对，默认全部保留。确认后点下方「导出替换结果」。`;
       statusAlign.className = 'status ok';
-      statusAlign.textContent = `对齐完成：${state.targets.length} 种目标语言，共 ${totalPairs.length} 对`;
+      statusAlign.textContent = `对齐完成：${state.targets.length} 种目标语言，共 ${totalPairs.length} 对`
+        + (totalSkipped > 0 ? `（已跳过 ${totalSkipped} 个未匹配文件）` : '');
     }
   } catch (e) {
     statusAlign.className = 'status err';
@@ -472,18 +476,26 @@ btnScanAlign.addEventListener('click', async () => {
  * 3. 每个目标命中最多被配对一次（贪心去重）
  */
 function alignOneTarget(srcFiles, srcHits, target) {
-  // 按文件名后缀提取序号辅助 — 更稳妥方案：按自然排序后序号对齐
-  const srcSorted = [...srcFiles].map((f, i) => ({ f, i }))
-    .sort((a, b) => naturalCompare(a.f.name, b.f.name));
-  const tgtSorted = [...target.files].map((f, i) => ({ f, i }))
-    .sort((a, b) => naturalCompare(a.f.name, b.f.name));
-
-  const n = Math.min(srcSorted.length, tgtSorted.length);
+  // 纯数字文件名：提取数字作为配对键，按数字升序排列后取交集
+  // 自动跳过缺集（源有但目标没有的集数，或反之）
+  const srcMap = new Map();
+  srcFiles.forEach((f, i) => {
+    const k = extractFileNumber(f.name);
+    if (k !== null) srcMap.set(k, i);
+  });
+  const tgtMap = new Map();
+  target.files.forEach((f, i) => {
+    const k = extractFileNumber(f.name);
+    if (k !== null) tgtMap.set(k, i);
+  });
+  const commonKeys = [...srcMap.keys()].filter(k => tgtMap.has(k)).sort((a, b) => a - b);
   const pairs = [];
+  const skippedSrc = srcMap.size - commonKeys.length;
+  const skippedTgt = tgtMap.size - commonKeys.length;
 
-  for (let fi = 0; fi < n; fi++) {
-    const sIdx = srcSorted[fi].i;
-    const tIdx = tgtSorted[fi].i;
+  for (const key of commonKeys) {
+    const sIdx = srcMap.get(key);
+    const tIdx = tgtMap.get(key);
     const tFileName = target.files[tIdx].name;
 
     // 收集此文件的源命中
@@ -513,9 +525,11 @@ function alignOneTarget(srcFiles, srcHits, target) {
         const th = tgtInFile[best];
         pairs.push({
           srcFile: state.srcFiles[sIdx].name,
+          srcFileIdx: sIdx,
           srcLineIdx: sh.lineIdx,
           srcText: sh.text,
           tgtFile: tFileName,
+          tgtFileIdx: tIdx,
           tgtLineIdx: th.lineIdx,
           tgtText: th.text,
           lineDiff: bestDiff,
@@ -525,12 +539,13 @@ function alignOneTarget(srcFiles, srcHits, target) {
     }
   }
 
-  return pairs;
+  return { pairs, skippedSrc, skippedTgt };
 }
 
 // ------- 配对审核 UI -------
 function renderPairTables() {
   pairTables.innerHTML = '';
+  expandedPairId = null;
   state.pairGroups.forEach((g, ti) => {
     const t = state.targets[ti];
     const wrapper = document.createElement('div');
@@ -557,11 +572,12 @@ function renderPairTables() {
     for (const p of g.pairs) {
       const tr = document.createElement('tr');
       tr.classList.add('pair-row');
+      tr.dataset.pairid = p.id;
       if (p.confidence === 'low') tr.classList.add('pair-low');
       tr.innerHTML = `
         <td><input type="checkbox" class="pair-check" data-pairid="${p.id}" ${state.keepMap.get(p.id) ? 'checked' : ''}/></td>
         <td>
-          <div class="pair-meta">${p.srcFile} · L${p.srcLineIdx + 1}</div>
+          <div class="pair-meta">${p.srcFile} · L${p.srcLineIdx + 1} <span class="pair-hint">▾ 点击查看上下文</span></div>
           <div class="pair-text">${highlight(p.srcText, state.srcTerm)}</div>
         </td>
         <td class="pair-diff" title="行号差">${p.lineDiff === 0 ? '=' : (p.lineDiff > 0 ? '↓' : '↑') + Math.abs(p.lineDiff)}</td>
@@ -569,6 +585,10 @@ function renderPairTables() {
           <div class="pair-meta">${p.tgtFile} · L${p.tgtLineIdx + 1}</div>
           <div class="pair-text">${highlight(p.tgtText, t.targetTerm)}</div>
         </td>`;
+      tr.addEventListener('click', (e) => {
+        if (e.target.closest('.pair-check')) return;
+        toggleContextRow(tr, p, ti);
+      });
       tbody.appendChild(tr);
     }
     wrapper.appendChild(table);
@@ -581,6 +601,68 @@ function renderPairTables() {
       state.keepMap.set(cb.dataset.pairid, cb.checked);
     });
   });
+}
+
+// ------- 上下文预览（点击展开前后 3 行） -------
+let expandedPairId = null;
+
+function toggleContextRow(tr, p, ti) {
+  const pairId = p.id;
+  // 先收起其他已展开的行
+  if (expandedPairId && expandedPairId !== pairId) {
+    const prev = pairTables.querySelector(`tr.pair-ctx-row[data-ctx-for="${expandedPairId}"]`);
+    if (prev) prev.remove();
+  }
+  // 切换当前行
+  const next = tr.nextElementSibling;
+  if (next && next.classList.contains('pair-ctx-row') && expandedPairId === pairId) {
+    next.remove();
+    expandedPairId = null;
+    return;
+  }
+  const ctxTr = renderContextRow(p, ti);
+  tr.after(ctxTr);
+  expandedPairId = pairId;
+}
+
+function renderContextRow(p, ti) {
+  const t = state.targets[ti];
+  const tr = document.createElement('tr');
+  tr.className = 'pair-ctx-row';
+  tr.dataset.ctxFor = p.id;
+
+  const srcSubs = (state.srcFiles[p.srcFileIdx] || {}).subs || [];
+  const tgtSubs = ((t.files[p.tgtFileIdx] || {}).subs) || [];
+
+  tr.innerHTML = `
+    <td colspan="4">
+      <div class="ctx-cols">
+        <div class="ctx-col">
+          ${renderContextLines(srcSubs, p.srcLineIdx, state.srcTerm, state.srcLang)}
+        </div>
+        <div class="ctx-col">
+          ${renderContextLines(tgtSubs, p.tgtLineIdx, t.targetTerm, t.lang)}
+        </div>
+      </div>
+    </td>`;
+  return tr;
+}
+
+function renderContextLines(subs, hitIdx, term, lang) {
+  const start = Math.max(0, hitIdx - 3);
+  const end = Math.min(subs.length - 1, hitIdx + 3);
+  let html = `<div class="ctx-col-title">${lang} · L${hitIdx + 1}</div>`;
+  for (let i = start; i <= end; i++) {
+    const line = subs[i];
+    if (!line || !line.text) continue;
+    const flat = line.text.replace(/\n/g, ' ');
+    const isHit = i === hitIdx;
+    html += `<div class="ctx-line${isHit ? ' hit' : ''}">
+      <span class="ctx-lineno">L${i + 1}</span>
+      <span class="ctx-text">${isHit ? highlight(flat, term) : escapeHtml(flat)}</span>
+    </div>`;
+  }
+  return html;
 }
 
 btnSelectAll.addEventListener('click', () => {
@@ -689,6 +771,11 @@ btnExport.addEventListener('click', async () => {
 });
 
 // ------- 工具函数 -------
+function extractFileNumber(name) {
+  const m = name.replace(/\.[^.]+$/, '').match(/(\d+)/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
 function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
