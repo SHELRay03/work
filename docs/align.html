@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>跨语言对齐 · 字幕工具箱</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="style.css?v=7" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="srt.js"></script>
+</head>
+<body>
+  <div class="bg-layer" aria-hidden="true"></div>
+
+  <header class="hud-top">
+    <a href="index.html" class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="1.5" rx=".5" fill="#fafffd"/><rect x="2" y="7.25" width="9" height="1.5" rx=".5" fill="#fafffd" opacity=".9"/><rect x="2" y="10.5" width="11" height="1.5" rx=".5" fill="#fafffd" opacity=".75"/></svg>
+      </span>
+      字幕工具箱
+    </a>
+    <nav class="hud-nav">
+      <a href="index.html">首页</a>
+      <a href="replace.html">术语替换</a>
+      <a href="identify.html">术语识别</a>
+      <a href="fix.html">SRT 修复</a>
+      <a href="align.html" class="active">跨语言对齐</a>
+    </nav>
+  </header>
+
+  <main class="hud-main">
+    <h1 class="page-title">跨语言术语对齐</h1>
+    <p class="page-sub">以源语言术语为锚点，在多语种字幕中找到对应翻译并批量修正</p>
+
+    <!-- Step ① 源语言 -->
+    <section class="panel">
+      <div class="panel-head"><span class="panel-dot"></span><h2>1. 源语言（锚点）</h2></div>
+      <p class="panel-sub">上传原文字幕文件夹，输入要作为锚点的术语。所有配对以此为基准。</p>
+      <div class="opts">
+        <label>语言：
+          <select id="srcLang" class="scene-select">
+            <option value="zh_cn">简体中文</option>
+            <option value="zh_tw">繁体中文</option>
+            <option value="en">英语</option>
+            <option value="ja">日语</option>
+            <option value="ko">韩语</option>
+            <option value="es">西班牙语</option>
+            <option value="fr">法语</option>
+            <option value="de">德语</option>
+          </select>
+        </label>
+        <label>搜索术语：
+          <input type="text" id="srcTerm" class="inline-input" placeholder="例如：阿宁" />
+        </label>
+      </div>
+      <div class="drop-zone" id="srcDrop">
+        <input type="file" id="srcInput" accept=".srt" webkitdirectory directory multiple hidden />
+        <div class="dz-inner">
+          <div class="dz-icon">📂</div>
+          <div>点击或拖入<b>整个 SRT 文件夹</b>（支持 webkitdirectory）</div>
+          <div class="dz-hint">仅上传 .srt 文件，保留原始文件名</div>
+        </div>
+      </div>
+      <div class="actions">
+        <button type="button" id="btnScanSrc">扫描源术语</button>
+      </div>
+      <div class="status" id="statusSrc"></div>
+      <div id="srcResult" class="scan-result" hidden></div>
+    </section>
+
+    <!-- Step ② 目标语言（动态） -->
+    <section class="panel">
+      <div class="panel-head"><span class="panel-dot"></span><h2>2. 目标语言（可添加多个）</h2></div>
+      <p class="panel-sub">每种目标语言对应一行：上传字幕文件夹、输入当前译法（错误的那个）、输入正确译法。</p>
+      <div id="targetList" class="target-list"></div>
+      <div class="actions">
+        <button type="button" id="btnAddTarget" class="btn-ghost">＋ 添加目标语言</button>
+        <button type="button" id="btnScanAlign" class="btn-primary" disabled>扫描并对齐</button>
+      </div>
+      <div class="status" id="statusAlign"></div>
+    </section>
+
+    <!-- Step ③ 配对审核 -->
+    <section class="panel" id="reviewPanel" hidden>
+      <div class="panel-head"><span class="panel-dot"></span><h2>3. 配对审核</h2></div>
+      <p class="panel-sub">每一行是一对源术语 ↔ 目标术语的自动配对。确认无误后勾选保留。</p>
+      <div class="actions">
+        <button type="button" id="btnSelectAll" class="btn-ghost">全选</button>
+        <button type="button" id="btnDeselectAll" class="btn-ghost">全部取消</button>
+        <span id="pairSummary" class="pair-summary"></span>
+      </div>
+      <div id="pairTables" class="pair-tables"></div>
+    </section>
+
+    <!-- Step ④ 替换导出 -->
+    <section class="panel" id="exportPanel" hidden>
+      <div class="panel-head"><span class="panel-dot"></span><h2>4. 替换并导出</h2></div>
+      <div class="opts">
+        <label><input type="checkbox" id="expAlsoFix" checked /> 替换后 SRT 规范化</label>
+        <label><input type="checkbox" id="expFolder" /> 导出为文件夹（需 Chrome/Edge）</label>
+      </div>
+      <div class="actions">
+        <button type="button" id="btnExport" class="btn-primary">导出替换结果</button>
+      </div>
+      <div class="status" id="statusExport"></div>
+    </section>
+  </main>
+
+<script>
+// =============================================================
+// 跨语言术语对齐 — 独立页面
+// 复用 srt.js 提供的 parseSrt / generateSrt / scanTextHits /
+//             saveFilesToFolder / naturalCompare / extractSrtFromFileList
+// =============================================================
+
+// ------- 状态 -------
+const state = {
+  srcFiles: [],          // [{ name, file, content, subs: parseSrt(content) }]
+  srcTerm: '',           // 搜索术语
+  srcLang: '',
+  srcHits: [],           // [{ fileIdx, lineIdx, start, end, text }]
+
+  targets: [],           // [{ lang, targetTerm, replacementTerm, files: [], hits: [] }]
+
+  pairGroups: [],        // 按 target 分组的配对：[{ tIdx, pairs: [] }]
+  keepMap: new Map(),    // pairId -> bool
+};
+
+const srcInput      = document.getElementById('srcInput');
+const srcDrop       = document.getElementById('srcDrop');
+const srcLang       = document.getElementById('srcLang');
+const srcTerm       = document.getElementById('srcTerm');
+const btnScanSrc    = document.getElementById('btnScanSrc');
+const statusSrc     = document.getElementById('statusSrc');
+const srcResult     = document.getElementById('srcResult');
+
+const targetList    = document.getElementById('targetList');
+const btnAddTarget  = document.getElementById('btnAddTarget');
+const btnScanAlign  = document.getElementById('btnScanAlign');
+const statusAlign   = document.getElementById('statusAlign');
+
+const reviewPanel   = document.getElementById('reviewPanel');
+const pairTables    = document.getElementById('pairTables');
+const pairSummary   = document.getElementById('pairSummary');
+const btnSelectAll  = document.getElementById('btnSelectAll');
+const btnDeselectAll= document.getElementById('btnDeselectAll');
+
+const exportPanel   = document.getElementById('exportPanel');
+const expAlsoFix    = document.getElementById('expAlsoFix');
+const expFolder     = document.getElementById('expFolder');
+const btnExport     = document.getElementById('btnExport');
+const statusExport  = document.getElementById('statusExport');
+
+// ------- 源语言：拖放 + 点击 -------
+srcDrop.addEventListener('click', () => srcInput.click());
+srcInput.addEventListener('change', async (e) => {
+  const list = extractSrtFromFileList(e.target.files);
+  await loadSrcFiles(list);
+});
+
+srcDrop.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  srcDrop.classList.add('dz-hover');
+});
+srcDrop.addEventListener('dragleave', () => srcDrop.classList.remove('dz-hover'));
+srcDrop.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  srcDrop.classList.remove('dz-hover');
+  const list = await extractSrtFromDropEvent(e);
+  await loadSrcFiles(list);
+});
+
+async function loadSrcFiles(list) {
+  state.srcFiles = [];
+  for (const f of list) {
+    const content = await f.file.text();
+    state.srcFiles.push({
+      name: f.name.split('/').pop(),
+      file: f.file,
+      content,
+      subs: parseSrt(content),
+    });
+  }
+  state.srcLang = srcLang.value;
+  statusSrc.className = 'status ok';
+  statusSrc.textContent = `已加载 ${state.srcFiles.length} 个源 SRT 文件`;
+}
+
+// ------- 源术语扫描 -------
+btnScanSrc.addEventListener('click', async () => {
+  const term = srcTerm.value.trim();
+  if (!term) return alert('请输入源语言搜索术语');
+  if (state.srcFiles.length === 0) return alert('请先上传源语言 SRT 文件夹');
+
+  state.srcTerm = term;
+  state.srcLang = srcLang.value;
+  state.srcHits = [];
+
+  btnScanSrc.disabled = true;
+  statusSrc.className = 'status';
+  statusSrc.textContent = '扫描中…';
+
+  try {
+    for (let fi = 0; fi < state.srcFiles.length; fi++) {
+      const sf = state.srcFiles[fi];
+      for (let li = 0; li < sf.subs.length; li++) {
+        const line = sf.subs[li];
+        if (!line.text) continue;
+        const flat = line.text.replace(/\n/g, ' ');
+        const pos = flat.toLowerCase().indexOf(term.toLowerCase());
+        if (pos !== -1) {
+          state.srcHits.push({
+            fileIdx: fi,
+            lineIdx: li,
+            start: line.start,
+            end: line.end,
+            text: flat,
+            context: line.text,
+          });
+        }
+      }
+    }
+
+    renderSrcResult();
+    statusSrc.className = 'status ok';
+    statusSrc.textContent = `扫描完成：共 ${state.srcHits.length} 处命中（${state.srcFiles.length} 个文件）`;
+  } finally {
+    btnScanSrc.disabled = false;
+  }
+});
+
+function renderSrcResult() {
+  srcResult.hidden = false;
+  srcResult.innerHTML = '';
+
+  const fileGroups = {};
+  for (const h of state.srcHits) {
+    const key = state.srcFiles[h.fileIdx].name;
+    (fileGroups[key] ||= []).push(h);
+  }
+
+  const summary = document.createElement('div');
+  summary.className = 'scan-summary';
+  summary.textContent = `命中分布：` + Object.entries(fileGroups).map(([k, v]) => `${k} (${v.length})`).join('  ');
+  srcResult.appendChild(summary);
+
+  const table = document.createElement('table');
+  table.className = 'hit-table';
+  table.innerHTML = `
+    <thead><tr><th>#</th><th>文件</th><th>行号</th><th>时间轴</th><th>上下文</th></tr></thead>
+    <tbody></tbody>`;
+  const tbody = table.querySelector('tbody');
+
+  const limit = 200;
+  for (let i = 0; i < Math.min(state.srcHits.length, limit); i++) {
+    const h = state.srcHits[i];
+    const fileName = state.srcFiles[h.fileIdx].name;
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${i + 1}</td>
+      <td class="hit-fname" title="${fileName}">${fileName}</td>
+      <td>${h.lineIdx + 1}</td>
+      <td>${formatTimecode(h.start)} → ${formatTimecode(h.end)}</td>
+      <td class="hit-ctx">${highlight(h.text, state.srcTerm)}</td>
+    `;
+    tbody.appendChild(row);
+  }
+  if (state.srcHits.length > limit) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td colspan="5" class="hit-more">…省略 ${state.srcHits.length - limit} 条</td>`;
+    tbody.appendChild(tr);
+  }
+  srcResult.appendChild(table);
+}
+
+// ------- 目标语言行 -------
+btnAddTarget.addEventListener('click', () => addTargetRow());
+
+function addTargetRow(existing) {
+  const t = existing || {
+    id: 't_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+    lang: 'ja',
+    targetTerm: '',
+    replacementTerm: '',
+    files: [],
+  };
+  if (!existing) state.targets.push(t);
+
+  const row = document.createElement('div');
+  row.className = 'target-row';
+  row.dataset.tid = t.id;
+
+  row.innerHTML = `
+    <div class="target-row-head">
+      <span class="target-row-title">目标语言 #${state.targets.indexOf(t) + 1}</span>
+      <button type="button" class="btn-icon target-remove" title="移除">×</button>
+    </div>
+    <div class="target-row-body">
+      <label>语言：
+        <select class="t-lang scene-select">
+          <option value="zh_cn">简体中文</option>
+          <option value="zh_tw">繁体中文</option>
+          <option value="en">英语</option>
+          <option value="ja" selected>日语</option>
+          <option value="ko">韩语</option>
+          <option value="es">西班牙语</option>
+          <option value="fr">法语</option>
+          <option value="de">德语</option>
+        </select>
+      </label>
+      <label>当前译法（错误的）：
+        <input type="text" class="t-target inline-input" placeholder="綾奈 / Camila" />
+      </label>
+      <label>正确译法（要替换成的）：
+        <input type="text" class="t-replacement inline-input" placeholder="アンニン / An-Ning" />
+      </label>
+    </div>
+    <div class="target-drop" title="点击或拖入 SRT 文件夹">
+      <input type="file" class="t-input" accept=".srt" webkitdirectory directory multiple hidden />
+      <div class="t-drop-inner">
+        <span class="t-drop-icon">📂</span>
+        <span class="t-drop-text">点击上传 / 拖入目标 SRT 文件夹</span>
+        <span class="t-drop-count" hidden></span>
+      </div>
+    </div>
+    <div class="target-status"></div>
+  `;
+
+  targetList.appendChild(row);
+
+  // 绑定事件
+  const select = row.querySelector('.t-lang');
+  const tInput = row.querySelector('.t-input');
+  const tDrop = row.querySelector('.target-drop');
+  const tCount = row.querySelector('.t-drop-count');
+  const tStatus = row.querySelector('.target-status');
+  const tRemove = row.querySelector('.target-remove');
+
+  select.value = t.lang;
+  select.addEventListener('change', () => {
+    t.lang = select.value;
+  });
+  row.querySelector('.t-target').value = t.targetTerm;
+  row.querySelector('.t-target').addEventListener('input', (e) => { t.targetTerm = e.target.value.trim(); checkScanAlign(); });
+  row.querySelector('.t-replacement').value = t.replacementTerm;
+  row.querySelector('.t-replacement').addEventListener('input', (e) => { t.replacementTerm = e.target.value.trim(); checkScanAlign(); });
+
+  tDrop.addEventListener('click', () => tInput.click());
+  tDrop.addEventListener('dragover', (e) => { e.preventDefault(); tDrop.classList.add('dz-hover'); });
+  tDrop.addEventListener('dragleave', () => tDrop.classList.remove('dz-hover'));
+  tDrop.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    tDrop.classList.remove('dz-hover');
+    const list = await extractSrtFromDropEvent(e);
+    await loadTargetFiles(t, list, tCount, tStatus);
+  });
+  tInput.addEventListener('change', async (e) => {
+    const list = extractSrtFromFileList(e.target.files);
+    await loadTargetFiles(t, list, tCount, tStatus);
+  });
+
+  tRemove.addEventListener('click', () => {
+    state.targets = state.targets.filter(x => x.id !== t.id);
+    row.remove();
+    checkScanAlign();
+  });
+}
+
+async function loadTargetFiles(t, list, countEl, statusEl) {
+  t.files = [];
+  for (const f of list) {
+    const content = await f.file.text();
+    t.files.push({
+      name: f.name.split('/').pop(),
+      file: f.file,
+      content,
+      subs: parseSrt(content),
+    });
+  }
+  countEl.textContent = `✓ ${t.files.length} 个文件`;
+  countEl.hidden = false;
+  statusEl.className = 'target-status ok';
+  statusEl.textContent = `已加载 ${t.files.length} 个 SRT 文件`;
+  checkScanAlign();
+}
+
+function checkScanAlign() {
+  const ready = state.srcHits.length > 0 &&
+                state.targets.length > 0 &&
+                state.targets.every(t => t.files.length > 0 && t.targetTerm && t.replacementTerm);
+  btnScanAlign.disabled = !ready;
+}
+
+// 默认加一个目标语言行
+addTargetRow();
+
+// ------- 对齐扫描 -------
+btnScanAlign.addEventListener('click', async () => {
+  if (state.srcHits.length === 0) return alert('请先扫描源语言术语');
+
+  btnScanAlign.disabled = true;
+  statusAlign.className = 'status';
+  statusAlign.textContent = '对齐中…';
+
+  try {
+    // 先为每个目标语言扫描命中
+    for (const t of state.targets) {
+      t.hits = [];
+      const needle = t.targetTerm.toLowerCase();
+      for (let fi = 0; fi < t.files.length; fi++) {
+        const tf = t.files[fi];
+        for (let li = 0; li < tf.subs.length; li++) {
+          const line = tf.subs[li];
+          if (!line.text) continue;
+          const flat = line.text.replace(/\n/g, ' ');
+          if (flat.toLowerCase().includes(needle)) {
+            t.hits.push({ fileIdx: fi, lineIdx: li, start: line.start, end: line.end, text: flat });
+          }
+        }
+      }
+    }
+
+    // 对齐：按文件名配对源/目标，然后在每个文件内按行号±1配对
+    state.pairGroups = [];
+    state.keepMap.clear();
+
+    const totalPairs = [];
+
+    for (let ti = 0; ti < state.targets.length; ti++) {
+      const t = state.targets[ti];
+      const pairs = alignOneTarget(state.srcFiles, state.srcHits, t);
+      pairs.forEach((p, idx) => {
+        p.id = `${ti}_${idx}`;
+        state.keepMap.set(p.id, true); // 默认保留
+        totalPairs.push(p);
+      });
+      state.pairGroups.push({ tIdx: ti, pairs });
+    }
+
+    renderPairTables();
+    reviewPanel.hidden = totalPairs.length === 0;
+    exportPanel.hidden = totalPairs.length === 0;
+
+    if (totalPairs.length === 0) {
+      statusAlign.className = 'status';
+      statusAlign.textContent = '未找到任何可自动配对的命中。请检查：①文件名是否自然排序后能一一对应 ②搜索术语是否正确';
+    } else {
+      const keepCount = totalPairs.filter(p => state.keepMap.get(p.id)).length;
+      pairSummary.textContent = `共 ${totalPairs.length} 对自动配对，默认全部保留。确认后点下方「导出替换结果」。`;
+      statusAlign.className = 'status ok';
+      statusAlign.textContent = `对齐完成：${state.targets.length} 种目标语言，共 ${totalPairs.length} 对`;
+    }
+  } catch (e) {
+    statusAlign.className = 'status err';
+    statusAlign.textContent = '对齐出错：' + e.message;
+  } finally {
+    btnScanAlign.disabled = false;
+  }
+});
+
+/**
+ * 对齐算法：
+ * 1. 源文件列表和目标文件列表按自然排序后，按序号一一配对
+ *    （文件名如 ep01.srt ↔ ep01_ja.srt 无法直接匹配名时，用序号对齐）
+ * 2. 对每个配对文件：
+ *    收集源文件所有命中行号，目标文件所有命中行号
+ *    对每个源命中，在目标命中中找「同行」或「±1行」的命中
+ *    优先同行，其次±1，取行号差最小的
+ * 3. 每个目标命中最多被配对一次（贪心去重）
+ */
+function alignOneTarget(srcFiles, srcHits, target) {
+  // 按文件名后缀提取序号辅助 — 更稳妥方案：按自然排序后序号对齐
+  const srcSorted = [...srcFiles].map((f, i) => ({ f, i }))
+    .sort((a, b) => naturalCompare(a.f.name, b.f.name));
+  const tgtSorted = [...target.files].map((f, i) => ({ f, i }))
+    .sort((a, b) => naturalCompare(a.f.name, b.f.name));
+
+  const n = Math.min(srcSorted.length, tgtSorted.length);
+  const pairs = [];
+
+  for (let fi = 0; fi < n; fi++) {
+    const sIdx = srcSorted[fi].i;
+    const tIdx = tgtSorted[fi].i;
+    const tFileName = target.files[tIdx].name;
+
+    // 收集此文件的源命中
+    const srcInFile = state.srcHits.filter(h => h.fileIdx === sIdx);
+    // 收集此文件的目标命中
+    const tgtInFile = target.hits.filter(h => h.fileIdx === tIdx);
+
+    if (srcInFile.length === 0 || tgtInFile.length === 0) continue;
+
+    // 贪心配对：对每个源命中，找行号差最小的目标命中（0 优先，±1 次之）
+    const used = new Set();
+    for (const sh of srcInFile) {
+      let best = null;
+      let bestDiff = Infinity;
+      for (let k = 0; k < tgtInFile.length; k++) {
+        if (used.has(k)) continue;
+        const th = tgtInFile[k];
+        const diff = Math.abs(sh.lineIdx - th.lineIdx);
+        if (diff <= 1 && diff < bestDiff) {
+          best = k;
+          bestDiff = diff;
+          if (diff === 0) break; // 同行直接拿下
+        }
+      }
+      if (best !== null) {
+        used.add(best);
+        const th = tgtInFile[best];
+        pairs.push({
+          srcFile: state.srcFiles[sIdx].name,
+          srcLineIdx: sh.lineIdx,
+          srcText: sh.text,
+          tgtFile: tFileName,
+          tgtLineIdx: th.lineIdx,
+          tgtText: th.text,
+          lineDiff: bestDiff,
+          confidence: bestDiff === 0 ? 'high' : 'low',
+        });
+      }
+    }
+  }
+
+  return pairs;
+}
+
+// ------- 配对审核 UI -------
+function renderPairTables() {
+  pairTables.innerHTML = '';
+  state.pairGroups.forEach((g, ti) => {
+    const t = state.targets[ti];
+    const wrapper = document.createElement('div');
+    wrapper.className = 'pair-group';
+    wrapper.dataset.tIdx = ti;
+
+    const h = document.createElement('h3');
+    h.className = 'pair-group-title';
+    h.innerHTML = `🎯 目标 ${ti + 1}：${t.files.length > 0 ? t.files[0].name.split('_')[0] + '…' : ''} <span class="pair-group-lang">${t.lang}</span> <span class="pair-group-term">${t.targetTerm} → ${t.replacementTerm}</span> <span class="pair-count">${g.pairs.length} 对</span>`;
+    wrapper.appendChild(h);
+
+    const table = document.createElement('table');
+    table.className = 'pair-table';
+    table.innerHTML = `
+      <thead><tr>
+        <th style="width:2rem"></th>
+        <th>源 · ${state.srcLang}</th>
+        <th style="width:2.5rem">Δ行</th>
+        <th>目标 · ${t.lang}</th>
+      </tr></thead>
+      <tbody></tbody>`;
+    const tbody = table.querySelector('tbody');
+
+    for (const p of g.pairs) {
+      const tr = document.createElement('tr');
+      tr.classList.add('pair-row');
+      if (p.confidence === 'low') tr.classList.add('pair-low');
+      tr.innerHTML = `
+        <td><input type="checkbox" class="pair-check" data-pairid="${p.id}" ${state.keepMap.get(p.id) ? 'checked' : ''}/></td>
+        <td>
+          <div class="pair-meta">${p.srcFile} · L${p.srcLineIdx + 1}</div>
+          <div class="pair-text">${highlight(p.srcText, state.srcTerm)}</div>
+        </td>
+        <td class="pair-diff" title="行号差">${p.lineDiff === 0 ? '=' : (p.lineDiff > 0 ? '↓' : '↑') + Math.abs(p.lineDiff)}</td>
+        <td>
+          <div class="pair-meta">${p.tgtFile} · L${p.tgtLineIdx + 1}</div>
+          <div class="pair-text">${highlight(p.tgtText, t.targetTerm)}</div>
+        </td>`;
+      tbody.appendChild(tr);
+    }
+    wrapper.appendChild(table);
+    pairTables.appendChild(wrapper);
+  });
+
+  // 绑定事件
+  pairTables.querySelectorAll('.pair-check').forEach(cb => {
+    cb.addEventListener('change', () => {
+      state.keepMap.set(cb.dataset.pairid, cb.checked);
+    });
+  });
+}
+
+btnSelectAll.addEventListener('click', () => {
+  pairTables.querySelectorAll('.pair-check').forEach(cb => {
+    cb.checked = true;
+    state.keepMap.set(cb.dataset.pairid, true);
+  });
+});
+btnDeselectAll.addEventListener('click', () => {
+  pairTables.querySelectorAll('.pair-check').forEach(cb => {
+    cb.checked = false;
+    state.keepMap.set(cb.dataset.pairid, false);
+  });
+});
+
+// ------- 替换导出 -------
+btnExport.addEventListener('click', async () => {
+  const useFolderExport = expFolder.checked;
+  btnExport.disabled = true;
+  statusExport.className = 'status';
+  statusExport.textContent = '替换中…';
+
+  try {
+    const masterZip = new JSZip();
+    const allOutputFiles = [];
+
+    for (let ti = 0; ti < state.targets.length; ti++) {
+      const t = state.targets[ti];
+      const pairs = state.pairGroups[ti]?.pairs || [];
+      const toReplace = pairs.filter(p => state.keepMap.get(p.id));
+      if (toReplace.length === 0) continue;
+
+      // 构建每个文件需要替换的行集合
+      const editsByFile = new Map(); // fileIdx -> Set<lineIdx>
+      for (const p of toReplace) {
+        const fi = t.files.findIndex(f => f.name === p.tgtFile);
+        if (fi === -1) continue;
+        if (!editsByFile.has(fi)) editsByFile.set(fi, new Set());
+        editsByFile.get(fi).add(p.tgtLineIdx);
+      }
+
+      const folderName = (t.replacementTerm || t.lang).replace(/[\\/:*?"<>|]/g, '_');
+
+      for (const [fi, lineSet] of editsByFile) {
+        const tf = t.files[fi];
+        const subs = parseSrt(tf.content);
+        let changeCount = 0;
+
+        for (const li of lineSet) {
+          if (li < 0 || li >= subs.length) continue;
+          const line = subs[li];
+          if (!line.text) continue;
+          const flat = line.text.replace(/\n/g, ' ');
+          const reg = new RegExp(escapeRegex(t.targetTerm), 'gi');
+          if (reg.test(flat)) {
+            line.text = line.text.replace(reg, t.replacementTerm);
+            changeCount++;
+          }
+        }
+
+        if (expAlsoFix.checked) {
+          for (const line of subs) {
+            if (line.text) {
+              line.text = line.text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+              const parts = line.text.split('\n').map(p => p.trim()).filter(p => p);
+              line.text = parts.join('\n');
+            }
+            if (line.end <= line.start) {
+              line.end = line.start + 2000;
+            }
+          }
+        }
+
+        const outContent = generateSrt(subs);
+        const relPath = `${folderName}/${tf.name}`;
+        masterZip.file(relPath, outContent);
+        allOutputFiles.push({ path: relPath, content: outContent });
+      }
+    }
+
+    if (allOutputFiles.length === 0) {
+      throw new Error('没有任何保留的配对，请在「配对审核」中勾选要替换的项');
+    }
+
+    if (useFolderExport) {
+      if (!window.showDirectoryPicker) {
+        throw new Error('当前浏览器不支持文件夹导出，请使用 Chrome/Edge，或取消勾选"导出为文件夹"');
+      }
+      const result = await saveFilesToFolder(allOutputFiles);
+      if (!result.success) throw new Error(result.message);
+      statusExport.className = 'status ok';
+      const folderList = state.targets.map(t => (t.replacementTerm || t.lang)).join('、');
+      statusExport.textContent = `${result.message}（${state.targets.length} 种目标语言，输出文件夹：${folderList}）`;
+    } else {
+      const blob = await masterZip.generateAsync({ type: 'blob' });
+      downloadBlob(blob, 'aligned_replace.zip');
+      statusExport.className = 'status ok';
+      statusExport.textContent = `已完成，下载已开始（${allOutputFiles.length} 个文件，${state.targets.length} 种语言）`;
+    }
+  } catch (e) {
+    statusExport.className = 'status err';
+    statusExport.textContent = '导出失败：' + e.message;
+  } finally {
+    btnExport.disabled = false;
+  }
+});
+
+// ------- 工具函数 -------
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function highlight(text, term) {
+  if (!term) return escapeHtml(text);
+  const escaped = escapeRegex(term);
+  const safeText = escapeHtml(text);
+  const re = new RegExp(escaped, 'gi');
+  return safeText.replace(re, m => `<mark>${m}</mark>`);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+</script>
+</body>
+</html>
