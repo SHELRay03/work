@@ -2050,6 +2050,21 @@ button.btn-secondary:hover:not(:disabled) {
   color: var(--text, #2d3a33);
 }
 
+.hit-ctx mark {
+  background: #fff4bf;
+  color: #8b6a00;
+  padding: 0.05rem 0.15rem;
+  border-radius: 3px;
+  font-weight: 500;
+}
+
+.digit-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+  color: #b8860b;
+  font-size: 0.85rem;
+}
+
 .hit-more {
   text-align: center !important;
   color: var(--text-muted, #6b7a6f) !important;

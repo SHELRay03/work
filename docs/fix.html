@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=8" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body>
@@ -42,8 +42,15 @@
           <input type="text" id="folderName" class="folder-name-input" placeholder="fixed" />
         </label>
       </div>
-      <div class="actions"><button type="button" id="btnFix">批量修复</button></div>
+      <div class="actions"><button type="button" id="btnFix">批量修复</button><button type="button" id="btnScanDigits" class="btn-ghost">扫描阿拉伯数字</button></div>
       <div class="status" id="statusFix"></div>
+    </section>
+
+    <section class="panel" id="digitPanel" hidden>
+      <div class="panel-head"><span class="panel-dot"></span><h2>阿拉伯数字识别结果</h2></div>
+      <p class="panel-sub">仅识别字幕正文中的阿拉伯数字位置（不含时间轴与序号）。只读展示，不修改原文件。</p>
+      <div class="status" id="statusDigit"></div>
+      <div id="digitResult" class="scan-result" hidden></div>
     </section>
   </main>
   <script src="srt.js?v=4"></script>
@@ -236,6 +243,139 @@
       a.download = filename;
       a.click();
       URL.revokeObjectURL(url);
+    }
+
+    // ------- 阿拉伯数字识别（只读定位） -------
+    const btnScanDigits = document.getElementById('btnScanDigits');
+    const digitPanel   = document.getElementById('digitPanel');
+    const digitResult  = document.getElementById('digitResult');
+    const statusDigit = document.getElementById('statusDigit');
+
+    btnScanDigits.addEventListener('click', async () => {
+      if (!sourceType) {
+        alert('请先上传或拖入字幕（ZIP / 文件夹）');
+        return;
+      }
+      btnScanDigits.disabled = true;
+      statusDigit.className = 'status';
+      statusDigit.textContent = '扫描中…';
+      digitPanel.hidden = false;
+      digitResult.hidden = true;
+
+      try {
+        const files = await loadFixSubtitleFiles();
+        const allHits = [];
+        const fileHitCount = {};
+
+        for (const f of files) {
+          const subs = parseSrt(f.content);
+          for (let i = 0; i < subs.length; i++) {
+            const line = subs[i];
+            if (!line.text) continue;
+            // 字幕正文可能多行，扁平化便于高亮展示
+            const flat = line.text.replace(/\r\n/g, '\n').replace(/\n/g, ' ');
+            const re = /\d+/g;
+            let m;
+            while ((m = re.exec(flat)) !== null) {
+              allHits.push({
+                fileName: f.name,
+                subIdx: i + 1,
+                start: line.start,
+                end: line.end,
+                text: flat,
+                digit: m[0],
+                digitStart: m.index,
+              });
+              fileHitCount[f.name] = (fileHitCount[f.name] || 0) + 1;
+            }
+          }
+        }
+
+        renderDigitResult(allHits, fileHitCount);
+        statusDigit.className = 'status ok';
+        statusDigit.textContent = `扫描完成：共 ${allHits.length} 处阿拉伯数字命中，涉及 ${Object.keys(fileHitCount).length} 个文件`;
+      } catch (e) {
+        statusDigit.className = 'status err';
+        statusDigit.textContent = '扫描失败：' + e.message;
+      } finally {
+        btnScanDigits.disabled = false;
+      }
+    });
+
+    function renderDigitResult(hits, fileHitCount) {
+      digitResult.hidden = false;
+      digitResult.innerHTML = '';
+
+      // 文件分布摘要
+      const summary = document.createElement('div');
+      summary.className = 'scan-summary';
+      const dist = Object.entries(fileHitCount)
+        .sort((a, b) => b[1] - a[1])
+        .map(([k, v]) => `${k.split('/').pop()} (${v})`)
+        .join('  ');
+      summary.textContent = `命中分布：` + dist;
+      digitResult.appendChild(summary);
+
+      // 命中表
+      const table = document.createElement('table');
+      table.className = 'hit-table';
+      table.innerHTML = `
+        <thead><tr>
+          <th style="width:2.5rem">#</th>
+          <th>文件</th>
+          <th style="width:3rem">字幕#</th>
+          <th style="width:9rem">时间轴</th>
+          <th>数字</th>
+          <th>上下文</th>
+        </tr></thead>
+        <tbody></tbody>`;
+      const tbody = table.querySelector('tbody');
+
+      const limit = 500;
+      const showCount = Math.min(hits.length, limit);
+      for (let i = 0; i < showCount; i++) {
+        const h = hits[i];
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${i + 1}</td>
+          <td class="hit-fname" title="${escapeHtmlAttr(h.fileName)}">${escapeHtml(h.fileName.split('/').pop())}</td>
+          <td>${h.subIdx}</td>
+          <td>${formatTimecode(h.start)} → ${formatTimecode(h.end)}</td>
+          <td class="digit-value">${escapeHtml(h.digit)}</td>
+          <td class="hit-ctx">${highlightDigit(h.text, h.digitStart, h.digit.length)}</td>`;
+        tbody.appendChild(tr);
+      }
+      if (hits.length > limit) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td colspan="6" class="hit-more">…省略 ${hits.length - limit} 条</td>`;
+        tbody.appendChild(tr);
+      }
+      digitResult.appendChild(table);
+    }
+
+    function highlightDigit(text, start, len) {
+      const safe = escapeHtml(text);
+      // 重建索引：escapeHtml 不改变 ASCII 字符位置（\d < 128 安全）
+      return safe.slice(0, start)
+        + `<mark>${safe.slice(start, start + len)}</mark>`
+        + safe.slice(start + len);
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    function escapeHtmlAttr(s) {
+      return escapeHtml(s).replace(/"/g, '&quot;');
+    }
+    function formatTimecode(ms) {
+      if (ms == null) return '--';
+      const total = Math.max(0, Math.floor(ms));
+      const h = Math.floor(total / 3600000);
+      const m = Math.floor((total % 3600000) / 60000);
+      const s = Math.floor((total % 60000) / 1000);
+      const milli = total % 1000;
+      const pad = (n, l = 2) => String(n).padStart(l, '0');
+      return `${pad(h)}:${pad(m)}:${pad(s)},${pad(3).slice(0, 3)}`;
     }
   </script>
 </body>
