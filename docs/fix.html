@@ -318,16 +318,7 @@
     function escapeHtmlAttr(s) {
       return escapeHtml(s).replace(/"/g, '&quot;');
     }
-    function formatTimecode(ms) {
-      if (ms == null) return '--';
-      const total = Math.max(0, Math.floor(ms));
-      const h = Math.floor(total / 3600000);
-      const m = Math.floor((total % 3600000) / 60000);
-      const s = Math.floor((total % 60000) / 1000);
-      const milli = total % 1000;
-      const pad = (n, l = 2) => String(n).padStart(l, '0');
-      return `${pad(h)}:${pad(m)}:${pad(s)},${pad(3).slice(0, 3)}`;
-    }
+    // 注意：formatTimecode 直接复用 srt.js 的全局实现，切勿在此重定义（同名全局函数会覆盖 srt.js 版本，导致 generateSrt 输出错误时间轴）
   </script>
 </body>
 </html>
