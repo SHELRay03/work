@@ -3,62 +3,63 @@
  */
 
 function parseSrt(text) {
-  const lines = text.split(/\r?\n/);
+  // 去 BOM、统一换行为 \n
+  const normalized = String(text).replace(/^﻿/, '').replace(/\r\n?/g, '\n');
+  // 按空行分块（SRT 规范：字幕块之间用一个或多个空行分隔）
+  const blocks = normalized.split(/\n{2,}/);
   const subs = [];
-  let i = 0;
-  
-  while (i < lines.length) {
-    const line = lines[i].trim();
-    
-    // 跳过空行
-    if (!line) {
-      i++;
-      continue;
+
+  const toMs = (h, m, s, ms) =>
+    parseInt(h, 10) * 3600000 +
+    parseInt(m, 10) * 60000 +
+    parseInt(s, 10) * 1000 +
+    parseInt(ms.padEnd(3, '0'), 10);
+
+  for (const block of blocks) {
+    const rawLines = block.split('\n');
+    // 去掉块首尾空行
+    while (rawLines.length && rawLines[0].trim() === '') rawLines.shift();
+    while (rawLines.length && rawLines[rawLines.length - 1].trim() === '') rawLines.pop();
+    if (rawLines.length === 0) continue;
+
+    // 第一行可能是序号（数字），也可能缺失序号直接是时间行
+    let cursor = 0;
+    let index = parseInt(rawLines[0].trim(), 10);
+    if (!isNaN(index) && !/-->/.test(rawLines[0])) {
+      cursor = 1;
+    } else {
+      index = NaN;
     }
-    
-    // 尝试解析序号
-    const index = parseInt(line, 10);
-    if (isNaN(index)) {
-      i++;
-      continue;
+
+    // 在接下来 1-2 行内找时间行（容错：序号与时间行之间可能夹异常行）
+    let timeLineIdx = -1;
+    for (let k = cursor; k < Math.min(rawLines.length, cursor + 2); k++) {
+      if (/-->/.test(rawLines[k])) { timeLineIdx = k; break; }
     }
-    
-    i++;
-    
-    // 解析时间码
-    if (i >= lines.length) break;
-    const timeLine = lines[i].trim();
-    i++;
-    
-    const timeMatch = timeLine.match(/^(\d{2}):(\d{2}):(\d{2}),(\d{3}) --> (\d{2}):(\d{2}):(\d{2}),(\d{3})$/);
+    if (timeLineIdx === -1) continue;
+
+    // 宽松时间码：小时/分钟/秒 1-2 位，毫秒 1-3 位，支持逗号或点号分隔，行尾允许位置信息
+    const timeMatch = rawLines[timeLineIdx].match(
+      /(\d{1,2}):(\d{1,2}):(\d{1,2})[,.](\d{1,3})\s*-->\s*(\d{1,2}):(\d{1,2}):(\d{1,2})[,.](\d{1,3})/
+    );
     if (!timeMatch) continue;
-    
-    const start = parseInt(timeMatch[1]) * 3600000 +
-                  parseInt(timeMatch[2]) * 60000 +
-                  parseInt(timeMatch[3]) * 1000 +
-                  parseInt(timeMatch[4]);
-    
-    const end = parseInt(timeMatch[5]) * 3600000 +
-                parseInt(timeMatch[6]) * 60000 +
-                parseInt(timeMatch[7]) * 1000 +
-                parseInt(timeMatch[8]);
-    
-    // 解析文本（可能多行）
-    const textLines = [];
-    while (i < lines.length && lines[i].trim() !== '') {
-      textLines.push(lines[i]);
-      i++;
-    }
-    i++;
-    
+
+    const start = toMs(timeMatch[1], timeMatch[2], timeMatch[3], timeMatch[4]);
+    const end = toMs(timeMatch[5], timeMatch[6], timeMatch[7], timeMatch[8]);
+    if (isNaN(start) || isNaN(end)) continue;
+
+    // 时间行之后全部为文本行
+    const textLines = rawLines.slice(timeLineIdx + 1).filter(l => l.trim() !== '');
+    if (textLines.length === 0) continue;
+
     subs.push({
-      index: index,
+      index: isNaN(index) ? subs.length + 1 : index,
       start: start,
       end: end,
       text: textLines.join('\n')
     });
   }
-  
+
   return subs;
 }
 
