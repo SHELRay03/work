@@ -5,8 +5,7 @@
 function parseSrt(text) {
   // 去 BOM、统一换行为 \n
   const normalized = String(text).replace(/^﻿/, '').replace(/\r\n?/g, '\n');
-  // 按空行分块（SRT 规范：字幕块之间用一个或多个空行分隔）
-  const blocks = normalized.split(/\n{2,}/);
+  const lines = normalized.split('\n');
   const subs = [];
 
   const toMs = (h, m, s, ms) =>
@@ -15,49 +14,53 @@ function parseSrt(text) {
     parseInt(s, 10) * 1000 +
     parseInt(ms.padEnd(3, '0'), 10);
 
-  for (const block of blocks) {
-    const rawLines = block.split('\n');
-    // 去掉块首尾空行
-    while (rawLines.length && rawLines[0].trim() === '') rawLines.shift();
-    while (rawLines.length && rawLines[rawLines.length - 1].trim() === '') rawLines.pop();
-    if (rawLines.length === 0) continue;
+  // 宽松时间码：小时/分钟/秒 1-2 位，毫秒 1-3 位，支持逗号或点号分隔
+  const timeRegex = /(\d{1,2}):(\d{1,2}):(\d{1,2})[,.](\d{1,3})\s*-->\s*(\d{1,2}):(\d{1,2}):(\d{1,2})[,.](\d{1,3})/;
 
-    // 第一行可能是序号（数字），也可能缺失序号直接是时间行
-    let cursor = 0;
-    let index = parseInt(rawLines[0].trim(), 10);
-    if (!isNaN(index) && !/-->/.test(rawLines[0])) {
-      cursor = 1;
+  // 以时间行作为块起始标志逐行扫描，不依赖块之间空行分隔
+  // 这样可兼容非标准 SRT（块之间仅单换行、无空行）
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i].trim();
+    const timeMatch = line.match(timeRegex);
+
+    if (timeMatch) {
+      const start = toMs(timeMatch[1], timeMatch[2], timeMatch[3], timeMatch[4]);
+      const end = toMs(timeMatch[5], timeMatch[6], timeMatch[7], timeMatch[8]);
+
+      // 时间行前一行若为纯数字，视为本块序号
+      let index = NaN;
+      if (i > 0 && /^\d+$/.test(lines[i - 1].trim())) {
+        index = parseInt(lines[i - 1].trim(), 10);
+      }
+
+      // 收集文本行：时间行之后，直到下一个时间行或下一块的序号
+      const textLines = [];
+      i++;
+      while (i < lines.length) {
+        const tl = lines[i].trim();
+        if (timeRegex.test(tl)) break; // 遇到下一个时间行，结束本块文本
+        // 纯数字且下一行是时间行，视为下一块序号，结束本块文本
+        if (/^\d+$/.test(tl) && i + 1 < lines.length && timeRegex.test(lines[i + 1].trim())) {
+          break;
+        }
+        if (tl !== '') {
+          textLines.push(tl);
+        }
+        i++;
+      }
+
+      if (!isNaN(start) && !isNaN(end) && textLines.length > 0) {
+        subs.push({
+          index: isNaN(index) ? subs.length + 1 : index,
+          start: start,
+          end: end,
+          text: textLines.join('\n')
+        });
+      }
     } else {
-      index = NaN;
+      i++;
     }
-
-    // 在接下来 1-2 行内找时间行（容错：序号与时间行之间可能夹异常行）
-    let timeLineIdx = -1;
-    for (let k = cursor; k < Math.min(rawLines.length, cursor + 2); k++) {
-      if (/-->/.test(rawLines[k])) { timeLineIdx = k; break; }
-    }
-    if (timeLineIdx === -1) continue;
-
-    // 宽松时间码：小时/分钟/秒 1-2 位，毫秒 1-3 位，支持逗号或点号分隔，行尾允许位置信息
-    const timeMatch = rawLines[timeLineIdx].match(
-      /(\d{1,2}):(\d{1,2}):(\d{1,2})[,.](\d{1,3})\s*-->\s*(\d{1,2}):(\d{1,2}):(\d{1,2})[,.](\d{1,3})/
-    );
-    if (!timeMatch) continue;
-
-    const start = toMs(timeMatch[1], timeMatch[2], timeMatch[3], timeMatch[4]);
-    const end = toMs(timeMatch[5], timeMatch[6], timeMatch[7], timeMatch[8]);
-    if (isNaN(start) || isNaN(end)) continue;
-
-    // 时间行之后全部为文本行
-    const textLines = rawLines.slice(timeLineIdx + 1).filter(l => l.trim() !== '');
-    if (textLines.length === 0) continue;
-
-    subs.push({
-      index: isNaN(index) ? subs.length + 1 : index,
-      start: start,
-      end: end,
-      text: textLines.join('\n')
-    });
   }
 
   return subs;
