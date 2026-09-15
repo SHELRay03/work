@@ -97,6 +97,23 @@
     font-size: 0.8rem;
     cursor: pointer;
   }
+  .dir-row.virtual {
+    background: #fff8e6;
+    border-left: 3px solid #e0b97a;
+    padding-left: 0.4rem;
+  }
+  .dir-row.virtual .dir-old em {
+    font-style: italic;
+    color: #b8852c;
+    font-size: 0.78rem;
+  }
+  .file-item.virtual .file-from { color: #b8852c; }
+  .file-item.ok.virtual .file-name::before {
+    content: '＋';
+    color: #e0a44e;
+    margin-right: 0.3rem;
+    font-weight: 700;
+  }
   .dir-row select:disabled { background: #f0f2ef; color: #9aa89e; cursor: not-allowed; }
   .dir-head {
     display: grid;
@@ -195,22 +212,32 @@ async function useRootHandle(handle) {
   reportPanel.hidden = true;
   try {
     state.childDirs = await scanChildDirs(handle);
-    if (state.childDirs.length === 0) {
-      statusPick.className = 'status err';
-      statusPick.textContent = '根目录下未发现子文件夹';
-      return;
-    }
-    // 默认配置：依次循环分配类型
+    // 默认配置：依次循环分配类型（不重复使用同一类型，最多覆盖前 N 个子目录）
     state.configs = state.childDirs.map((_, i) => ({
       type: TYPES[i % TYPES.length],
       X: '英',
       Y: '中',
       narrMode: 'Y语旁白',
     }));
+    // 补齐缺失的类型：为没有对应子目录的类型追加虚拟「待创建」行
+    const usedTypes = new Set(state.configs.map(c => c.type));
+    const missingTypes = TYPES.filter(t => !usedTypes.has(t));
+    let virtualAdded = 0;
+    for (const t of missingTypes) {
+      state.childDirs.push({ handle: null, name: '', virtual: true });
+      state.configs.push({ type: t, X: '英', Y: '中', narrMode: 'Y语旁白' });
+      virtualAdded++;
+    }
     renderDirList();
     cfgPanel.hidden = false;
     statusPick.className = 'status ok';
-    statusPick.textContent = `扫描完成：共 ${state.childDirs.length} 个子文件夹，已自动分配默认类型，请按需调整`;
+    if (state.childDirs.length === 0) {
+      statusPick.textContent = `根目录下无子文件夹，已生成 ${virtualAdded} 个待创建空文件夹`;
+    } else if (virtualAdded > 0) {
+      statusPick.textContent = `扫描完成：共 ${state.childDirs.length - virtualAdded} 个子文件夹，已补齐 ${virtualAdded} 个待创建空文件夹`;
+    } else {
+      statusPick.textContent = `扫描完成：共 ${state.childDirs.length} 个子文件夹，已自动分配默认类型，请按需调整`;
+    }
   } catch (e) {
     state.rootHandle = null;
     statusPick.className = 'status err';
@@ -312,9 +339,10 @@ function renderDirList() {
     const xOpts   = LANGS.map(l => `<option value="${l}"${l === cfg.X ? ' selected' : ''}>${l}</option>`).join('');
     const yOpts   = LANGS.map(l => `<option value="${l}"${l === cfg.Y ? ' selected' : ''}>${l}</option>`).join('');
     const narrOpts = NARR_MODES.map(n => `<option value="${n}"${n === cfg.narrMode ? ' selected' : ''}>${n}</option>`).join('');
-    html += `<div class="dir-row" data-idx="${i}">
-      <span class="dir-old">${escapeHtml(d.name)}</span>
-      <select data-field="type">${typeOpts}</select>
+    const isVirtual = !!d.virtual;
+    html += `<div class="dir-row${isVirtual ? ' virtual' : ''}" data-idx="${i}">
+      <span class="dir-old">${isVirtual ? '<em>（待创建）</em>' : escapeHtml(d.name)}</span>
+      <select data-field="type"${isVirtual ? ' disabled' : ''}>${typeOpts}</select>
       <select data-field="X">${xOpts}</select>
       <select data-field="Y">${yOpts}</select>
       <select data-field="narrMode">${narrOpts}</select>
@@ -415,6 +443,7 @@ async function buildPlan(rootHandle, childDirs, configs) {
       oldName: childDirs[i].name,
       newName,
       conflict: false,
+      virtual: !!childDirs[i].virtual,
     });
     nameCount.set(newName, (nameCount.get(newName) || 0) + 1);
   }
@@ -431,7 +460,12 @@ async function buildPlan(rootHandle, childDirs, configs) {
   const fileRenames = []; // 按子目录分组
   for (const r of folderRenames) {
     if (r.conflict) {
-      fileRenames.push({ dirOld: r.oldName, dirNew: r.newName, files: [], conflict: true });
+      fileRenames.push({ dirOld: r.oldName, dirNew: r.newName, files: [], conflict: true, virtual: r.virtual });
+      continue;
+    }
+    if (r.virtual) {
+      // 虚拟行无原文件夹，仅创建空目录，不扫描文件
+      fileRenames.push({ dirOld: '(空)', dirNew: r.newName, files: [], conflict: false, virtual: true });
       continue;
     }
     const files = [];
@@ -461,7 +495,7 @@ async function buildPlan(rootHandle, childDirs, configs) {
       usedNames.add(newName);
       files.push({ handle: entry, oldName, newName });
     }
-    fileRenames.push({ dirOld: r.oldName, dirNew: r.newName, handle: r.handle, files, conflict: false });
+    fileRenames.push({ dirOld: r.oldName, dirNew: r.newName, handle: r.handle, files, conflict: false, virtual: false });
   }
 
   return { folderRenames, fileRenames };
@@ -472,22 +506,29 @@ function renderPreview(plan) {
   const folderCount = plan.folderRenames.length;
   const conflictCount = plan.folderRenames.filter(r => r.conflict).length;
   const totalFiles = plan.fileRenames.reduce((s, g) => s + g.files.length, 0);
-  previewSummary.textContent = `文件夹改名 ${folderCount} 个（其中冲突跳过 ${conflictCount} 个），文件改名 ${totalFiles} 个。`;
+  const virtualCount = plan.folderRenames.filter(r => r.virtual).length;
+  previewSummary.textContent = `文件夹改名 ${folderCount - virtualCount} 个 + 待创建 ${virtualCount} 个（其中冲突跳过 ${conflictCount} 个），文件改名 ${totalFiles} 个。`;
 
   let html = '';
   // 文件夹改名预览
-  html += section('文件夹改名（' + folderCount + '）', plan.folderRenames.map(r =>
-    `<div class="file-item${r.conflict ? ' skip' : ''}">
-      <span class="file-name">${escapeHtml(r.oldName)}</span>
-      <span class="file-from">→ ${escapeHtml(r.newName)}${r.conflict ? '（冲突，跳过）' : ''}</span>
-    </div>`).join(''));
+  html += section('文件夹改名（' + folderCount + '）', plan.folderRenames.map(r => {
+    const cls = r.conflict ? ' skip' : (r.virtual ? ' virtual' : '');
+    const label = r.virtual ? '（待创建空文件夹）' : (r.conflict ? '（冲突，跳过）' : '');
+    const oldName = r.virtual ? '（空）' : r.oldName;
+    return `<div class="file-item${cls}">
+      <span class="file-name">${escapeHtml(oldName)}</span>
+      <span class="file-from">→ ${escapeHtml(r.newName)}${label}</span>
+    </div>`;
+  }).join(''));
 
   // 文件改名预览（按子目录分组）
   for (const g of plan.fileRenames) {
-    if (g.files.length === 0 && !g.conflict) continue;
+    if (g.files.length === 0 && !g.conflict && !g.virtual) continue;
     const groupTitle = g.conflict
       ? `${escapeHtml(g.dirOld)} → ${escapeHtml(g.dirNew)}（冲突跳过）`
-      : `${escapeHtml(g.dirOld)} → ${escapeHtml(g.dirNew)}（${g.files.length} 个文件改名）`;
+      : g.virtual
+        ? `${escapeHtml(g.dirNew)}（将创建空文件夹）`
+        : `${escapeHtml(g.dirOld)} → ${escapeHtml(g.dirNew)}（${g.files.length} 个文件改名）`;
     const body = g.files.length === 0
       ? '<div class="file-empty">无文件改名</div>'
       : g.files.map(f =>
@@ -537,6 +578,19 @@ async function executeRename(rootHandle, plan) {
       folderResults.push({ oldName: r.oldName, newName: r.newName, ok: false, error: '冲突跳过' });
       continue;
     }
+
+    // 虚拟行：直接创建空文件夹，不扫描文件
+    if (r.virtual) {
+      let ok = true, err = '';
+      try {
+        await rootHandle.getDirectoryHandle(r.newName, { create: true });
+      } catch (e) {
+        ok = false; err = e.message;
+      }
+      folderResults.push({ oldName: '(空)', newName: r.newName, ok, error: err, virtual: true });
+      continue;
+    }
+
     // 改文件夹名
     let dirHandle = r.handle;
     let newName = r.newName;
@@ -634,12 +688,13 @@ function renderReport(plan, result) {
   const okFiles = result.fileResults.reduce((s, g) => s + g.items.filter(i => i.ok).length, 0);
   const failFiles = totalFiles - okFiles;
 
-  let html = `<div class="report-summary">文件夹改名完成 ${okFolders} 个，跳过/失败 ${skipFolders} 个；文件改名完成 ${okFiles} 个，失败 ${failFiles} 个。</div>`;
+  const virtualOk = result.folderResults.filter(r => r.ok && r.virtual).length;
+  let html = `<div class="report-summary">文件夹改名完成 ${okFolders - virtualOk} 个、空文件夹创建 ${virtualOk} 个，跳过/失败 ${skipFolders} 个；文件改名完成 ${okFiles} 个，失败 ${failFiles} 个。</div>`;
 
   if (okFolders > 0) {
     html += section('文件夹改名成功（' + okFolders + '）',
       result.folderResults.filter(r => r.ok).map(r =>
-        `<div class="file-item ok"><span class="file-name">${escapeHtml(r.oldName)}</span><span class="file-from">→ ${escapeHtml(r.newName)}</span></div>`).join(''));
+        `<div class="file-item ok${r.virtual ? ' virtual' : ''}"><span class="file-name">${escapeHtml(r.oldName)}</span><span class="file-from">→ ${escapeHtml(r.newName)}${r.virtual ? '（已创建空文件夹）' : ''}</span></div>`).join(''));
   }
   if (skipFolders > 0) {
     html += section('文件夹改名跳过/失败（' + skipFolders + '）',
