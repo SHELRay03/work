@@ -39,7 +39,7 @@
       <div class="drop-zone" id="pickDrop">
         <div class="dz-inner">
           <div class="dz-icon">📁</div>
-          <div id="pickText">点击选择根目录（需授权读写）</div>
+          <div id="pickText">点击选择根目录，或直接拖入文件夹</div>
           <div class="dz-hint">仅支持 Chrome/Edge；操作将修改原目录，请确保已备份</div>
         </div>
       </div>
@@ -94,21 +94,46 @@ if (!window.showDirectoryPicker) {
   statusPick.textContent = '请使用 Chrome/Edge 浏览器，需要 File System Access API 支持。';
 }
 
-// ------- 选择根目录 -------
-pickDrop.addEventListener('click', async () => {
-  if (!window.showDirectoryPicker) return;
+// ------- 使用某个根目录 handle（点击/拖拽共用） -------
+async function useRootHandle(handle) {
+  if (!handle || handle.kind !== 'directory') {
+    statusPick.className = 'status err';
+    statusPick.textContent = '请提供文件夹（而非单个文件）';
+    return;
+  }
+  // 请求读写权限
+  const perm = await handle.requestPermission?.({ mode: 'readwrite' });
+  if (perm && perm !== 'granted') {
+    statusPick.className = 'status err';
+    statusPick.textContent = '未授权读写权限，无法平铺';
+    return;
+  }
+  state.rootHandle = handle;
+  pickText.innerHTML = `已选择：<b>${escapeHtml(handle.name)}</b>`;
+  statusPick.className = 'status';
+  statusPick.textContent = '扫描中…';
+  previewPanel.hidden = true;
+  reportPanel.hidden = true;
   try {
-    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
-    state.rootHandle = handle;
-    pickText.innerHTML = `已选择：<b>${escapeHtml(handle.name)}</b>`;
-    statusPick.className = 'status';
-    statusPick.textContent = '扫描中…';
-    reportPanel.hidden = true;
     const plan = await scanAndPreview(handle);
     state.plan = plan;
     renderPreview(plan);
     statusPick.className = 'status ok';
     statusPick.textContent = `扫描完成：根目录「${handle.name}」`;
+  } catch (e) {
+    state.rootHandle = null;
+    state.plan = null;
+    statusPick.className = 'status err';
+    statusPick.textContent = '扫描失败：' + e.message;
+  }
+}
+
+// ------- 点击选择根目录 -------
+pickDrop.addEventListener('click', async () => {
+  if (!window.showDirectoryPicker) return;
+  try {
+    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    await useRootHandle(handle);
   } catch (e) {
     if (e.name === 'AbortError') {
       statusPick.className = 'status';
@@ -117,6 +142,52 @@ pickDrop.addEventListener('click', async () => {
       statusPick.className = 'status err';
       statusPick.textContent = '选择目录失败：' + e.message;
     }
+  }
+});
+
+// ------- 拖拽选择根目录 -------
+['dragenter', 'dragover'].forEach(evt => {
+  pickDrop.addEventListener(evt, (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    pickDrop.classList.add('dz-hover');
+  });
+});
+['dragleave', 'drop'].forEach(evt => {
+  pickDrop.addEventListener(evt, (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    pickDrop.classList.remove('dz-hover');
+  });
+});
+pickDrop.addEventListener('drop', async (e) => {
+  if (!window.showDirectoryPicker) return;
+  const items = e.dataTransfer?.items;
+  if (!items) return;
+  try {
+    // 优先使用 getAsFileSystemHandle（File System Access API，可拿到 DirectoryHandle 用于原地操作）
+    let dirHandle = null;
+    for (const item of items) {
+      const getHandle = item.getAsFileSystemHandle
+        ? item.getAsFileSystemHandle()
+        : null;
+      if (!getHandle) continue;
+      const handle = await getHandle;
+      if (handle && handle.kind === 'directory') {
+        dirHandle = handle;
+        break;
+      }
+    }
+    if (dirHandle) {
+      await useRootHandle(dirHandle);
+      return;
+    }
+    // 兜底：拖入的是普通文件
+    statusPick.className = 'status err';
+    statusPick.textContent = '请拖入文件夹，而非单个文件';
+  } catch (err) {
+    statusPick.className = 'status err';
+    statusPick.textContent = '拖入目录失败：' + (err.message || err.name);
   }
 });
 
@@ -275,7 +346,7 @@ btnReScan.addEventListener('click', () => {
   state.plan = null;
   previewPanel.hidden = true;
   reportPanel.hidden = true;
-  pickText.textContent = '点击选择根目录（需授权读写）';
+  pickText.textContent = '点击选择根目录，或直接拖入文件夹';
   statusPick.className = 'status';
   statusPick.textContent = '';
 });
