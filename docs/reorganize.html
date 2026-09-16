@@ -391,6 +391,7 @@ function renderPreview(src) {
           srcPath = cat.name;
         } else {
           // SUB/VO/DUB：检查每个需要的语种子文件夹
+          // 路径显示保留语种子文件夹结构（如 字幕/en、字幕/de）
           const paths = [];
           let allFound = true;
           for (const sl of sub.srcLangs) {
@@ -401,7 +402,7 @@ function renderPreview(src) {
               allFound = false;
             }
           }
-          srcPath = paths.join(' + ');
+          srcPath = paths.join(' + ') + ' → 保留语种子文件夹';
           available = allFound;
         }
       }
@@ -538,8 +539,8 @@ async function executeReorganize(rootHandle, src, showName, onProgress) {
           await copyDirContents(cat.handle, dst, progressCb, cat.name, langResult.errors);
           langResult.items.push({ target: sub.name, op: '复制', ok: true });
         } else {
-          // SUB/VO：合并 en（基准）+ X（目标语种）；
-          // DUB：仅 X
+          // SUB/VO：合并 en（基准）+ X（目标语种），每个语种保留原语种子文件夹结构
+          // DUB：仅 X，同样保留 X 语种子文件夹
           const dst = await outputHandle.getDirectoryHandle(sub.name, { create: true });
           const missingLangs = [];
           for (const sl of sub.srcLangs) {
@@ -550,7 +551,9 @@ async function executeReorganize(rootHandle, src, showName, onProgress) {
               missingLangs.push(sl);
               continue;
             }
-            await copyDirContents(srcSubHandle, dst, progressCb, `${cat.name}/${sl}`, langResult.errors);
+            // 在目标下创建 sl 子文件夹，保留原语种目录结构（如 英德字幕/en/、英德字幕/de/）
+            const langSubDst = await dst.getDirectoryHandle(sl, { create: true });
+            await copyDirContents(srcSubHandle, langSubDst, progressCb, `${cat.name}/${sl}`, langResult.errors);
           }
           if (missingLangs.length > 0) {
             langResult.items.push({
@@ -595,8 +598,8 @@ async function executeReorganize(rootHandle, src, showName, onProgress) {
   return results;
 }
 
-// ------- 复制目录内容（流式 + 进度 + 错误恢复） -------
-// progress(path, ok) 每个文件回调；errors 累计失败列表
+// ------- 复制目录内容（流式分块 + 进度 + 错误恢复） -------
+// progress(path, ok, err) 每个文件回调；errors 累计失败列表
 async function copyDirContents(srcHandle, dstHandle, progress, pathPrefix, errors) {
   for await (const entry of srcHandle.values()) {
     if (entry.kind === 'file') {
@@ -605,11 +608,29 @@ async function copyDirContents(srcHandle, dstHandle, progress, pathPrefix, error
         const srcFile = await entry.getFile();
         const dstFile = await dstHandle.getFileHandle(entry.name, { create: true });
         const w = await dstFile.createWritable();
-        // 优先用 stream 流式写入（避免大文件读入内存）；不支持则回退到 Blob
+        // 优先用 stream 分块写入（低内存 + 可靠落盘）
+        let written = false;
         if (srcFile.stream && typeof srcFile.stream === 'function') {
-          await w.write(srcFile.stream());
-        } else {
-          await w.write(srcFile);
+          try {
+            const reader = srcFile.stream().getReader();
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              await w.write({ type: 'write', data: value });
+            }
+            await reader.releaseLock();
+            written = true;
+          } catch (streamErr) {
+            // 流式失败 → 回退到 arrayBuffer
+            try { await w.seek(0); } catch (_) {}
+            const buf = await srcFile.arrayBuffer();
+            await w.write({ type: 'write', data: buf });
+            written = true;
+          }
+        }
+        if (!written) {
+          const buf = await srcFile.arrayBuffer();
+          await w.write({ type: 'write', data: buf });
         }
         await w.close();
         progress && progress(curPath, true);
