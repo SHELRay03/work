@@ -307,14 +307,15 @@ async function scanSource(rootHandle) {
 }
 
 // ------- 输出子文件夹名生成 -------
+// 注：英X字幕/英X旁白需要同时合并 en（基准）和 X（目标语种）两个语种文件夹的内容
 function outputSubFolders(langCode) {
   const c = LANG_CHAR[langCode];
   return [
-    { id: 'ORIG', name: '原剧',         op: 'copy' },
-    { id: 'CLEAN',name: '净版视频',     op: 'copy' },
-    { id: 'SUB',  name: `英${c}字幕`,   op: 'copy' },
-    { id: 'VO',   name: `英${c}旁白`,   op: 'copy' },
-    { id: 'DUB',  name: `${c}语压制视频`,op: 'copy' },
+    { id: 'ORIG', name: '原剧',           op: 'copy', srcLangs: ['*'] },
+    { id: 'CLEAN',name: '净版视频',       op: 'copy', srcLangs: ['*'] },
+    { id: 'SUB',  name: `英${c}字幕`,     op: 'copy', srcLangs: [BASE_LANG, langCode] },
+    { id: 'VO',   name: `英${c}旁白`,     op: 'copy', srcLangs: [BASE_LANG, langCode] },
+    { id: 'DUB',  name: `${c}语压制视频`, op: 'copy', srcLangs: [langCode] },
   ];
 }
 
@@ -349,18 +350,28 @@ function renderPreview(src) {
       let available = false;
       let srcPath = '（源缺失）';
       if (cat) {
-        if (['ORIG', 'CLEAN'].includes(sub.id)) {
+        if (sub.srcLangs[0] === '*') {
+          // ORIG/CLEAN：整个类别文件夹
           available = true;
           srcPath = cat.name;
         } else {
-          available = cat.langs.has(lang);
-          srcPath = available ? `${cat.name}/${lang}` : `${cat.name}/${lang}（不存在）`;
+          // SUB/VO/DUB：检查每个需要的语种子文件夹
+          const paths = [];
+          let allFound = true;
+          for (const sl of sub.srcLangs) {
+            if (cat.langs.has(sl)) {
+              paths.push(`${cat.name}/${sl}`);
+            } else {
+              paths.push(`${cat.name}/${sl}（缺失）`);
+              allFound = false;
+            }
+          }
+          srcPath = paths.join(' + ');
+          available = allFound;
         }
       }
-      const opLabel = '复制';
-      const opCls = 'op-copy';
       itemsHtml += `<div class="reorg-item">
-        <span class="${opCls}">${opLabel}</span>
+        <span class="op-copy">复制</span>
         <span class="target">${escapeHtml(sub.name)}</span>
         <span class="src">${escapeHtml(srcPath)}</span>
         <span>${available ? '' : '<span style="color:#c0392b">跳过</span>'}</span>
@@ -436,23 +447,36 @@ async function executeReorganize(rootHandle, src, showName) {
         continue;
       }
       try {
-        if (['ORIG', 'CLEAN'].includes(sub.id)) {
-          // 复制整个类别文件夹内容到输出子文件夹
+        if (sub.srcLangs[0] === '*') {
+          // ORIG/CLEAN：复制整个类别文件夹内容
           const dst = await outputHandle.getDirectoryHandle(sub.name, { create: true });
           await copyDirContents(cat.handle, dst);
           langResult.items.push({ target: sub.name, op: '复制', ok: true });
         } else {
-          // 复制 VO/DUB/SUB/<lang> 内容到输出子文件夹（不删除源）
-          let srcSubHandle = null;
-          try {
-            srcSubHandle = await cat.handle.getDirectoryHandle(lang);
-          } catch (e) {
-            langResult.items.push({ target: sub.name, op: '复制', ok: false, error: `源 ${cat.name}/${lang} 不存在` });
-            continue;
-          }
+          // SUB/VO：合并 en（基准）+ X（目标语种）；
+          // DUB：仅 X
           const dst = await outputHandle.getDirectoryHandle(sub.name, { create: true });
-          await copyDirContents(srcSubHandle, dst);
-          langResult.items.push({ target: sub.name, op: '复制', ok: true });
+          const missingLangs = [];
+          for (const sl of sub.srcLangs) {
+            let srcSubHandle = null;
+            try {
+              srcSubHandle = await cat.handle.getDirectoryHandle(sl);
+            } catch (e) {
+              missingLangs.push(sl);
+              continue;
+            }
+            await copyDirContents(srcSubHandle, dst);
+          }
+          if (missingLangs.length > 0) {
+            langResult.items.push({
+              target: sub.name,
+              op: '复制',
+              ok: false,
+              error: `部分源缺失：${cat.name}/${missingLangs.join(',')} 不存在`,
+            });
+          } else {
+            langResult.items.push({ target: sub.name, op: '复制', ok: true });
+          }
         }
       } catch (e) {
         langResult.items.push({ target: sub.name, op: '复制', ok: false, error: e.message });
