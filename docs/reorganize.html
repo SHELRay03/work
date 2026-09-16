@@ -63,6 +63,14 @@
 
     <section class="panel" id="reportPanel" hidden>
       <div class="panel-head"><span class="panel-dot"></span><h2>3. 执行报告</h2></div>
+      <div id="progressBox" class="progress-box" hidden>
+        <div class="progress-head">
+          <span id="progressStage">准备中…</span>
+          <span id="progressCount" class="progress-count">0 / 0</span>
+        </div>
+        <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
+        <div id="progressFile" class="progress-file"></div>
+      </div>
       <div id="reportContent"></div>
     </section>
   </main>
@@ -127,8 +135,35 @@
   .reorg-report-group { margin-bottom: 0.8rem; }
   .reorg-report-item { padding: 0.25rem 0; font-size: 0.78rem; }
   .reorg-report-item.ok { color: var(--mint-deep, #2e8b6e); }
-  .reorg-report-item.fail { color: #c0392b; }
-  .reorg-report-item.skip { color: #9aa89e; }
+.reorg-report-item.fail { color: #c0392b; }
+.reorg-report-item.skip { color: #9aa89e; }
+.progress-box {
+  margin: 0.6rem 0 1rem;
+  padding: 0.75rem 0.9rem;
+  background: var(--bg-panel, #f7faf8);
+  border: 1px solid var(--line, #dde5df);
+  border-radius: 8px;
+}
+.progress-head {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 0.82rem; color: var(--text, #2d3a33); margin-bottom: 0.45rem;
+}
+.progress-count {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--mint-deep, #2e8b6e); font-weight: 600;
+}
+.progress-bar {
+  height: 6px; background: #e8efe9; border-radius: 3px; overflow: hidden;
+}
+.progress-fill {
+  height: 100%; background: var(--mint, #5ec9a0); width: 0%;
+  transition: width 0.2s ease;
+}
+.progress-file {
+  margin-top: 0.4rem; font-size: 0.74rem; color: var(--text-muted, #6b7a6f);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-all; max-height: 3.2em; overflow: hidden;
+}
 </style>
 
 <script>
@@ -402,15 +437,36 @@ function renderPreview(src) {
 }
 
 // ------- 执行重组 -------
+const progressBox   = document.getElementById('progressBox');
+const progressStage = document.getElementById('progressStage');
+const progressCount = document.getElementById('progressCount');
+const progressFill  = document.getElementById('progressFill');
+const progressFile  = document.getElementById('progressFile');
+
 btnExec.addEventListener('click', async () => {
   if (!state.rootHandle || !state.source) return;
   btnExec.disabled = true;
   btnReScan.disabled = true;
   reportPanel.hidden = false;
+  progressBox.hidden = false;
+  progressStage.textContent = '准备中…';
+  progressCount.textContent = '0 / 0';
+  progressFill.style.width = '0%';
+  progressFile.textContent = '';
   reportContent.innerHTML = '<div class="status">执行中…</div>';
 
   try {
-    const result = await executeReorganize(state.rootHandle, state.source, state.showName);
+    const result = await executeReorganize(
+      state.rootHandle, state.source, state.showName,
+      ({ stage, path, copied, total }) => {
+        progressStage.textContent = stage || '复制中…';
+        progressCount.textContent = `${copied} / ${total}`;
+        progressFile.textContent = path || '';
+        const pct = total > 0 ? Math.min(100, (copied / total) * 100) : 0;
+        progressFill.style.width = pct.toFixed(1) + '%';
+      }
+    );
+    progressBox.hidden = true;
     renderReport(result);
   } catch (e) {
     reportContent.innerHTML = `<div class="status err">执行失败：${escapeHtml(e.message)}</div>`;
@@ -420,13 +476,13 @@ btnExec.addEventListener('click', async () => {
   }
 });
 
-async function executeReorganize(rootHandle, src, showName) {
+async function executeReorganize(rootHandle, src, showName, onProgress) {
   const results = []; // 每个语种一个结果
 
   for (const lang of src.targetLangs) {
     const fullName = LANG_FULL[lang];
     const outputName = `${fullName} ${showName}`;
-    const langResult = { outputName, lang, items: [] };
+    const langResult = { outputName, lang, items: [], errors: [] };
 
     // 检查输出父文件夹是否已存在
     let outputHandle = null;
@@ -440,6 +496,35 @@ async function executeReorganize(rootHandle, src, showName) {
     if (!outputOk) { results.push(langResult); continue; }
 
     const subs = outputSubFolders(lang);
+    // 预扫描本语种需要复制的文件总数
+    let totalFiles = 0;
+    for (const sub of subs) {
+      const cat = src.catMap[sub.id];
+      if (!cat) continue;
+      try {
+        if (sub.srcLangs[0] === '*') {
+          totalFiles += await countFiles(cat.handle);
+        } else {
+          for (const sl of sub.srcLangs) {
+            try {
+              const subHandle = await cat.handle.getDirectoryHandle(sl);
+              totalFiles += await countFiles(subHandle);
+            } catch (e) {}
+          }
+        }
+      } catch (e) {}
+    }
+    if (src.xlsxFile) totalFiles += 1;
+
+    let copied = 0;
+    const progressCb = (path, ok, err) => {
+      copied++;
+      onProgress && onProgress({
+        stage: `${outputName} / 复制中`,
+        path, copied, total: totalFiles,
+      });
+    };
+
     for (const sub of subs) {
       const cat = src.catMap[sub.id];
       if (!cat) {
@@ -450,7 +535,7 @@ async function executeReorganize(rootHandle, src, showName) {
         if (sub.srcLangs[0] === '*') {
           // ORIG/CLEAN：复制整个类别文件夹内容
           const dst = await outputHandle.getDirectoryHandle(sub.name, { create: true });
-          await copyDirContents(cat.handle, dst);
+          await copyDirContents(cat.handle, dst, progressCb, cat.name, langResult.errors);
           langResult.items.push({ target: sub.name, op: '复制', ok: true });
         } else {
           // SUB/VO：合并 en（基准）+ X（目标语种）；
@@ -465,7 +550,7 @@ async function executeReorganize(rootHandle, src, showName) {
               missingLangs.push(sl);
               continue;
             }
-            await copyDirContents(srcSubHandle, dst);
+            await copyDirContents(srcSubHandle, dst, progressCb, `${cat.name}/${sl}`, langResult.errors);
           }
           if (missingLangs.length > 0) {
             langResult.items.push({
@@ -483,13 +568,20 @@ async function executeReorganize(rootHandle, src, showName) {
       }
     }
 
-    // xlsx 复制
+    // xlsx 复制（流式）
     if (src.xlsxFile) {
       try {
         const dstFile = await outputHandle.getFileHandle('本地化清单.xlsx', { create: true });
         const w = await dstFile.createWritable();
-        await w.write(await src.xlsxFile.handle.getFile());
+        const srcFile = await src.xlsxFile.handle.getFile();
+        if (srcFile.stream && typeof srcFile.stream === 'function') {
+          await w.write(srcFile.stream());
+        } else {
+          await w.write(srcFile);
+        }
         await w.close();
+        copied++;
+        onProgress && onProgress({ stage: `${outputName} / xlsx`, path: '本地化清单.xlsx', copied, total: totalFiles });
         langResult.items.push({ target: '本地化清单.xlsx', op: '复制', ok: true });
       } catch (e) {
         langResult.items.push({ target: '本地化清单.xlsx', op: '复制', ok: false, error: e.message });
@@ -503,21 +595,48 @@ async function executeReorganize(rootHandle, src, showName) {
   return results;
 }
 
-// ------- 复制目录内容（srcHandle 内所有条目 → dstHandle） -------
-async function copyDirContents(srcHandle, dstHandle) {
+// ------- 复制目录内容（流式 + 进度 + 错误恢复） -------
+// progress(path, ok) 每个文件回调；errors 累计失败列表
+async function copyDirContents(srcHandle, dstHandle, progress, pathPrefix, errors) {
   for await (const entry of srcHandle.values()) {
     if (entry.kind === 'file') {
-      const srcFile = await entry.getFile();
-      const dstFile = await dstHandle.getFileHandle(entry.name, { create: true });
-      const w = await dstFile.createWritable();
-      await w.write(srcFile);
-      await w.close();
+      const curPath = pathPrefix ? `${pathPrefix}/${entry.name}` : entry.name;
+      try {
+        const srcFile = await entry.getFile();
+        const dstFile = await dstHandle.getFileHandle(entry.name, { create: true });
+        const w = await dstFile.createWritable();
+        // 优先用 stream 流式写入（避免大文件读入内存）；不支持则回退到 Blob
+        if (srcFile.stream && typeof srcFile.stream === 'function') {
+          await w.write(srcFile.stream());
+        } else {
+          await w.write(srcFile);
+        }
+        await w.close();
+        progress && progress(curPath, true);
+      } catch (e) {
+        errors && errors.push({ path: curPath, error: e.message });
+        progress && progress(curPath, false, e.message);
+      }
     } else if (entry.kind === 'directory') {
       const subDst = await dstHandle.getDirectoryHandle(entry.name, { create: true });
       const subSrc = await srcHandle.getDirectoryHandle(entry.name);
-      await copyDirContents(subSrc, subDst);
+      const subPrefix = pathPrefix ? `${pathPrefix}/${entry.name}` : entry.name;
+      await copyDirContents(subSrc, subDst, progress, subPrefix, errors);
     }
   }
+}
+
+// ------- 预扫描统计文件总数 -------
+async function countFiles(dirHandle) {
+  let n = 0;
+  for await (const entry of dirHandle.values()) {
+    if (entry.kind === 'file') n++;
+    else if (entry.kind === 'directory') {
+      const sub = await dirHandle.getDirectoryHandle(entry.name);
+      n += await countFiles(sub);
+    }
+  }
+  return n;
 }
 
 // （所有操作均为复制，无需移动/删除函数）
@@ -528,12 +647,23 @@ function renderReport(results) {
   for (const r of results) {
     const okCount = r.items.filter(i => i.ok).length;
     const total = r.items.length;
+    const errCount = (r.errors && r.errors.length) || 0;
     html += `<div class="reorg-report-group">
-      <h4 style="margin:0 0 0.3rem">${escapeHtml(r.outputName)}（${okCount}/${total} 成功）</h4>`;
+      <h4 style="margin:0 0 0.3rem">${escapeHtml(r.outputName)}（${okCount}/${total} 成功${errCount ? '，' + errCount + ' 个文件失败' : ''}）</h4>`;
     for (const item of r.items) {
       const cls = item.ok ? 'ok' : (item.error ? 'fail' : 'skip');
       const icon = item.ok ? '✓' : '✗';
       html += `<div class="reorg-report-item ${cls}">${icon} [${item.op}] ${escapeHtml(item.target)}${item.error ? ' — ' + escapeHtml(item.error) : ''}</div>`;
+    }
+    if (errCount > 0) {
+      html += '<div style="margin-top:0.3rem;padding-left:0.8rem;border-left:2px solid #e0b4b4;font-size:0.74rem;color:#b85e5e">';
+      for (const e of r.errors.slice(0, 50)) {
+        html += `<div>✗ ${escapeHtml(e.path)} — ${escapeHtml(e.error)}</div>`;
+      }
+      if (r.errors.length > 50) {
+        html += `<div>… 还有 ${r.errors.length - 50} 个失败项</div>`;
+      }
+      html += '</div>';
     }
     html += '</div>';
   }
