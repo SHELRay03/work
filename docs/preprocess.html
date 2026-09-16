@@ -107,6 +107,21 @@
     color: #b8852c;
     font-size: 0.78rem;
   }
+  .dir-row .dir-subs {
+    font-size: 0.7rem;
+    color: #5a8a4e;
+    margin-top: 0.2rem;
+    opacity: 0.9;
+  }
+  .file-sub-row {
+    padding: 0.25rem 0.4rem;
+    font-size: 0.75rem;
+    color: #5a8a4e;
+    border-left: 2px solid #9ec9a5;
+    margin-left: 0.6rem;
+    background: #f5fbf3;
+  }
+  .file-sub-row::before { content: '＋ '; color: #5a8a4e; }
   .file-item.virtual .file-from { color: #b8852c; }
   .file-item.ok.virtual .file-name::before {
     content: '＋';
@@ -157,6 +172,8 @@
 const TYPES = ['净版视频', 'X语压制视频', '原剧', 'YX字幕', '旁白'];
 const NARR_MODES = ['Y语旁白', 'XY旁白'];
 const LANGS = ['中', '英', '西', '日', '韩', '泰', '法', '德'];
+// 语言名 → ISO 639-1 代码（用于「zz修改」子文件夹命名）
+const LANG_CODE = { '中': 'zh', '英': 'en', '西': 'es', '日': 'ja', '韩': 'ko', '泰': 'th', '法': 'fr', '德': 'de' };
 
 const state = {
   rootHandle: null,    // 根目录 FileSystemDirectoryHandle
@@ -340,13 +357,17 @@ function renderDirList() {
     const yOpts   = LANGS.map(l => `<option value="${l}"${l === cfg.Y ? ' selected' : ''}>${l}</option>`).join('');
     const narrOpts = NARR_MODES.map(n => `<option value="${n}"${n === cfg.narrMode ? ' selected' : ''}>${n}</option>`).join('');
     const isVirtual = !!d.virtual;
+    const subs = buildSubFolderNames(cfg);
+    const newNameHtml = subs.length > 0
+      ? `${escapeHtml(newName)}<div class="dir-subs">＋ ${subs.map(s => escapeHtml(s)).join(' · ')}</div>`
+      : escapeHtml(newName);
     html += `<div class="dir-row${isVirtual ? ' virtual' : ''}" data-idx="${i}">
       <span class="dir-old">${isVirtual ? '<em>（待创建）</em>' : escapeHtml(d.name)}</span>
       <select data-field="type"${isVirtual ? ' disabled' : ''}>${typeOpts}</select>
       <select data-field="X">${xOpts}</select>
       <select data-field="Y">${yOpts}</select>
       <select data-field="narrMode">${narrOpts}</select>
-      <span class="dir-new">${escapeHtml(newName)}</span>
+      <span class="dir-new">${newNameHtml}</span>
     </div>`;
   });
   dirList.innerHTML = html;
@@ -359,8 +380,14 @@ function renderDirList() {
         const field = sel.dataset.field;
         state.configs[idx][field] = sel.value;
         updateRowEnabled(row, state.configs[idx]);
-        // 更新本行预览
-        row.querySelector('.dir-new').textContent = buildFolderName(state.configs[idx]);
+        // 更新本行预览（主名 + 子文件夹）
+        const cfg = state.configs[idx];
+        const newName = buildFolderName(cfg);
+        const subs = buildSubFolderNames(cfg);
+        const newNameHtml = subs.length > 0
+          ? `${escapeHtml(newName)}<div class="dir-subs">＋ ${subs.map(s => escapeHtml(s)).join(' · ')}</div>`
+          : escapeHtml(newName);
+        row.querySelector('.dir-new').innerHTML = newNameHtml;
       });
     });
     updateRowEnabled(row, state.configs[idx]);
@@ -373,6 +400,9 @@ function updateRowEnabled(row, cfg) {
   const narrSel  = row.querySelector('select[data-field="narrMode"]');
   switch (cfg.type) {
     case '净版视频':
+      // 净版视频主名不含 X，但需要 X 决定子文件夹「带X文旁白」
+      xSel.disabled = false; ySel.disabled = narrSel.disabled = true;
+      break;
     case '原剧':
       xSel.disabled = ySel.disabled = narrSel.disabled = true;
       break;
@@ -391,11 +421,25 @@ function updateRowEnabled(row, cfg) {
 // ------- 文件夹新名生成 -------
 function buildFolderName({ type, X, Y, narrMode }) {
   if (type === '净版视频') return '净版视频';
-  if (type === 'X语压制视频') return X + '压制视频';
+  if (type === 'X语压制视频') return X + '语压制视频';
   if (type === '原剧') return '原剧';
   if (type === 'YX字幕') return Y + X + '字幕';
   // type === '旁白'
   return narrMode === 'Y语旁白' ? Y + '语旁白' : X + Y + '旁白';
+}
+
+// ------- 子文件夹名列表（在主文件夹内部创建） -------
+function buildSubFolderNames({ type, X, Y, narrMode }) {
+  if (type === '净版视频') {
+    // 净版视频文件夹内：带<X>文旁白 + 仅抹除字幕
+    return [`带${X}文旁白`, '仅抹除字幕'];
+  }
+  if (type === 'YX字幕') {
+    // YX字幕文件夹内：以 X 的语言代码命名「zz修改」
+    const code = LANG_CODE[X];
+    return code ? [`${code}修改`] : [];
+  }
+  return [];
 }
 
 // ------- 文件名归一化 -------
@@ -438,10 +482,12 @@ async function buildPlan(rootHandle, childDirs, configs) {
   const nameCount = new Map();
   for (let i = 0; i < childDirs.length; i++) {
     const newName = buildFolderName(configs[i]);
+    const subFolders = buildSubFolderNames(configs[i]);
     folderRenames.push({
       handle: childDirs[i].handle,
       oldName: childDirs[i].name,
       newName,
+      subFolders,
       conflict: false,
       virtual: !!childDirs[i].virtual,
     });
@@ -515,9 +561,13 @@ function renderPreview(plan) {
     const cls = r.conflict ? ' skip' : (r.virtual ? ' virtual' : '');
     const label = r.virtual ? '（待创建空文件夹）' : (r.conflict ? '（冲突，跳过）' : '');
     const oldName = r.virtual ? '（空）' : r.oldName;
+    const subsHtml = (r.subFolders && r.subFolders.length > 0)
+      ? r.subFolders.map(s => `<div class="file-sub-row">${escapeHtml(s)}</div>`).join('')
+      : '';
     return `<div class="file-item${cls}">
       <span class="file-name">${escapeHtml(oldName)}</span>
       <span class="file-from">→ ${escapeHtml(r.newName)}${label}</span>
+      ${subsHtml}
     </div>`;
   }).join(''));
 
@@ -569,25 +619,43 @@ btnExec.addEventListener('click', async () => {
 });
 
 async function executeRename(rootHandle, plan) {
-  const folderResults = []; // { oldName, newName, ok, error }
+  const folderResults = []; // { oldName, newName, ok, error, virtual, subResults }
   const fileResults = [];  // { dirOld, dirNew, items: [{ oldName, newName, ok, error }] }
+
+  // 辅助：在 dirHandle 内创建子文件夹
+  async function createSubs(dirHandle, subFolders) {
+    const subResults = [];
+    if (!dirHandle || !subFolders || subFolders.length === 0) return subResults;
+    for (const subName of subFolders) {
+      let subOk = true, subErr = '';
+      try {
+        await dirHandle.getDirectoryHandle(subName, { create: true });
+      } catch (e) {
+        subOk = false; subErr = e.message;
+      }
+      subResults.push({ name: subName, ok: subOk, error: subErr });
+    }
+    return subResults;
+  }
 
   // 1. 改文件夹名 + 改文件夹内文件名
   for (const r of plan.folderRenames) {
     if (r.conflict) {
-      folderResults.push({ oldName: r.oldName, newName: r.newName, ok: false, error: '冲突跳过' });
+      folderResults.push({ oldName: r.oldName, newName: r.newName, ok: false, error: '冲突跳过', virtual: false, subResults: [] });
       continue;
     }
 
-    // 虚拟行：直接创建空文件夹，不扫描文件
+    // 虚拟行：直接创建空文件夹
     if (r.virtual) {
       let ok = true, err = '';
+      let dirHandle = null;
       try {
-        await rootHandle.getDirectoryHandle(r.newName, { create: true });
+        dirHandle = await rootHandle.getDirectoryHandle(r.newName, { create: true });
       } catch (e) {
         ok = false; err = e.message;
       }
-      folderResults.push({ oldName: '(空)', newName: r.newName, ok, error: err, virtual: true });
+      const subResults = ok ? await createSubs(dirHandle, r.subFolders) : [];
+      folderResults.push({ oldName: '(空)', newName: r.newName, ok, error: err, virtual: true, subResults });
       continue;
     }
 
@@ -607,7 +675,8 @@ async function executeRename(rootHandle, plan) {
       folderOk = false;
       folderErr = e.message;
     }
-    folderResults.push({ oldName, newName, ok: folderOk, error: folderErr });
+    const subResults = folderOk ? await createSubs(dirHandle, r.subFolders) : [];
+    folderResults.push({ oldName, newName, ok: folderOk, error: folderErr, virtual: false, subResults });
     if (!folderOk) continue;
 
     // 改文件名（在新 handle 内）
@@ -689,12 +758,18 @@ function renderReport(plan, result) {
   const failFiles = totalFiles - okFiles;
 
   const virtualOk = result.folderResults.filter(r => r.ok && r.virtual).length;
-  let html = `<div class="report-summary">文件夹改名完成 ${okFolders - virtualOk} 个、空文件夹创建 ${virtualOk} 个，跳过/失败 ${skipFolders} 个；文件改名完成 ${okFiles} 个，失败 ${failFiles} 个。</div>`;
+  const totalSubs = result.folderResults.reduce((s, r) => s + (r.subResults ? r.subResults.length : 0), 0);
+  const okSubs = result.folderResults.reduce((s, r) => s + (r.subResults ? r.subResults.filter(x => x.ok).length : 0), 0);
+  let html = `<div class="report-summary">文件夹改名完成 ${okFolders - virtualOk} 个、空文件夹创建 ${virtualOk} 个，跳过/失败 ${skipFolders} 个；文件改名完成 ${okFiles} 个，失败 ${failFiles} 个；子文件夹创建 ${okSubs}/${totalSubs} 个。</div>`;
 
   if (okFolders > 0) {
     html += section('文件夹改名成功（' + okFolders + '）',
-      result.folderResults.filter(r => r.ok).map(r =>
-        `<div class="file-item ok${r.virtual ? ' virtual' : ''}"><span class="file-name">${escapeHtml(r.oldName)}</span><span class="file-from">→ ${escapeHtml(r.newName)}${r.virtual ? '（已创建空文件夹）' : ''}</span></div>`).join(''));
+      result.folderResults.filter(r => r.ok).map(r => {
+        const subHtml = (r.subResults && r.subResults.length > 0)
+          ? r.subResults.map(s => `<div class="file-sub-row${s.ok ? '' : ' skip'}">${escapeHtml(s.name)}${s.ok ? '' : '（' + escapeHtml(s.error) + '）'}</div>`).join('')
+          : '';
+        return `<div class="file-item ok${r.virtual ? ' virtual' : ''}"><span class="file-name">${escapeHtml(r.oldName)}</span><span class="file-from">→ ${escapeHtml(r.newName)}${r.virtual ? '（已创建空文件夹）' : ''}</span>${subHtml}</div>`;
+      }).join(''));
   }
   if (skipFolders > 0) {
     html += section('文件夹改名跳过/失败（' + skipFolders + '）',
