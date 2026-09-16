@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>语种重组 · 字幕工具箱</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="style.css?v=9" />
+</head>
+<body>
+  <div class="bg-layer" aria-hidden="true"></div>
+
+  <header class="hud-top">
+    <a href="index.html" class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="1.5" rx=".5" fill="#fafffd"/><rect x="2" y="7.25" width="9" height="1.5" rx=".5" fill="#fafffd" opacity=".9"/><rect x="2" y="10.5" width="11" height="1.5" rx=".5" fill="#fafffd" opacity=".75"/></svg>
+      </span>
+      字幕工具箱
+    </a>
+    <nav class="hud-nav">
+      <a href="index.html">首页</a>
+      <a href="reorganize.html" class="active">语种重组</a>
+      <a href="preprocess.html">预处理</a>
+      <a href="replace.html">术语替换</a>
+      <a href="fix.html">SRT 修复</a>
+      <a href="align.html">跨语言对齐</a>
+      <a href="flatten.html">目录平铺</a>
+    </nav>
+  </header>
+
+  <main class="hud-main">
+    <h1 class="page-title">语种重组</h1>
+    <p class="page-sub">将按「类别」组织的外包文件夹，重组为按「语种」组织的输出结构</p>
+
+    <section class="panel">
+      <div class="panel-head"><span class="panel-dot"></span><h2>1. 选择源根目录</h2></div>
+      <p class="panel-sub">
+        源目录需包含带「旁白/压制/原剧/字幕/净版」字样的子文件夹，其中旁白/压制/字幕下按语种代码（de/en/es…）分子文件夹。
+        英语(en)为基准语言，其余语种各产出一个输出文件夹。
+      </p>
+      <div class="drop-zone" id="pickDrop">
+        <div class="dz-inner">
+          <div class="dz-icon">📁</div>
+          <div id="pickText">点击选择源根目录，或直接拖入文件夹</div>
+          <div class="dz-hint">仅支持 Chrome/Edge；所有内容均为复制，源文件夹保持不变</div>
+        </div>
+      </div>
+      <div class="status" id="statusPick"></div>
+    </section>
+
+    <section class="panel" id="previewPanel" hidden>
+      <div class="panel-head"><span class="panel-dot"></span><h2>2. 重组预览</h2></div>
+      <div id="scanSummary" class="scan-summary"></div>
+      <div id="previewDetail"></div>
+      <div class="actions">
+        <button type="button" id="btnExec" class="btn-primary">执行重组</button>
+        <button type="button" id="btnReScan" class="btn-ghost">重新选择目录</button>
+      </div>
+    </section>
+
+    <section class="panel" id="reportPanel" hidden>
+      <div class="panel-head"><span class="panel-dot"></span><h2>3. 执行报告</h2></div>
+      <div id="reportContent"></div>
+    </section>
+  </main>
+
+<style>
+  .reorg-tree { margin: 0.6rem 0; }
+  .reorg-lang-group {
+    margin-bottom: 0.9rem;
+    border: 1px solid var(--line, #dde5df);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .reorg-lang-head {
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-panel, #f7faf8);
+    font-weight: 600;
+    color: var(--text, #2d3a33);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .reorg-lang-head .lang-code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.75rem;
+    color: var(--mint-deep, #2e8b6e);
+    background: rgba(46,139,110,0.1);
+    padding: 0.1rem 0.45rem;
+    border-radius: 4px;
+  }
+  .reorg-output-name {
+    color: var(--mint-deep, #2e8b6e);
+    font-weight: 700;
+  }
+  .reorg-item {
+    display: grid;
+    grid-template-columns: 1.5rem 11rem 1fr 4.5rem;
+    gap: 0.5rem;
+    align-items: center;
+    padding: 0.4rem 0.75rem;
+    border-top: 1px solid var(--line, #dde5df);
+    font-size: 0.78rem;
+  }
+  .reorg-item .op-copy { color: #2e8b6e; font-weight: 600; }
+  .reorg-item .op-move { color: #c0392b; font-weight: 600; }
+  .reorg-item .op-skip { color: #9aa89e; }
+  .reorg-item .target { font-weight: 500; color: var(--text, #2d3a33); }
+  .reorg-item .src { color: var(--text-muted, #6b7a6f); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; word-break: break-all; }
+  .reorg-cat-summary {
+    display: flex; flex-wrap: wrap; gap: 0.6rem;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.76rem;
+    color: var(--text-muted, #6b7a6f);
+  }
+  .reorg-cat-chip {
+    background: var(--bg-panel, #f7faf8);
+    border: 1px solid var(--line, #dde5df);
+    border-radius: 4px;
+    padding: 0.15rem 0.5rem;
+  }
+  .reorg-cat-chip.found { color: var(--mint-deep, #2e8b6e); border-color: var(--mint, #5ec9a0); }
+  .reorg-cat-chip.missing { color: #b85e5e; border-color: #e0b4b4; }
+  .reorg-report-group { margin-bottom: 0.8rem; }
+  .reorg-report-item { padding: 0.25rem 0; font-size: 0.78rem; }
+  .reorg-report-item.ok { color: var(--mint-deep, #2e8b6e); }
+  .reorg-report-item.fail { color: #c0392b; }
+  .reorg-report-item.skip { color: #9aa89e; }
+</style>
+
+<script>
+// =============================================================
+// 语种重组模块 — 独立页面
+// 输入：按类别组织的源目录；输出：按语种组织的目录
+// =============================================================
+
+const LANG_FULL = { en:'英语', de:'德语', es:'西班牙语', ja:'日语', ko:'韩语', th:'泰语', fr:'法语', zh:'中文' };
+const LANG_CHAR = { en:'英', de:'德', es:'西', ja:'日', ko:'韩', th:'泰', fr:'法', zh:'中' };
+const BASE_LANG = 'en';
+
+// 类别识别：关键字 → 类别标识
+const CATEGORIES = [
+  { key: '旁白', id: 'VO',   label: '旁白' },
+  { key: '压制', id: 'DUB',  label: '压制' },
+  { key: '原剧', id: 'ORIG', label: '原剧' },
+  { key: '字幕', id: 'SUB',  label: '字幕' },
+  { key: '净版', id: 'CLEAN',label: '净版' },
+];
+
+const state = {
+  rootHandle: null,
+  showName: '',
+  source: null, // scanSource 返回的结构
+};
+
+const pickDrop       = document.getElementById('pickDrop');
+const pickText       = document.getElementById('pickText');
+const statusPick     = document.getElementById('statusPick');
+const previewPanel   = document.getElementById('previewPanel');
+const scanSummary    = document.getElementById('scanSummary');
+const previewDetail  = document.getElementById('previewDetail');
+const btnExec        = document.getElementById('btnExec');
+const btnReScan      = document.getElementById('btnReScan');
+const reportPanel    = document.getElementById('reportPanel');
+const reportContent  = document.getElementById('reportContent');
+
+if (!window.showDirectoryPicker) {
+  pickText.textContent = '当前浏览器不支持语种重组';
+  pickDrop.style.opacity = '0.5';
+  pickDrop.style.cursor = 'not-allowed';
+  statusPick.className = 'status err';
+  statusPick.textContent = '请使用 Chrome/Edge 浏览器，需要 File System Access API 支持。';
+}
+
+// ------- 选择根目录 -------
+async function useRootHandle(handle) {
+  if (!handle || handle.kind !== 'directory') {
+    statusPick.className = 'status err';
+    statusPick.textContent = '请提供文件夹（而非单个文件）';
+    return;
+  }
+  const perm = await handle.requestPermission?.({ mode: 'readwrite' });
+  if (perm && perm !== 'granted') {
+    statusPick.className = 'status err';
+    statusPick.textContent = '未授权读写权限，无法重组';
+    return;
+  }
+  state.rootHandle = handle;
+  state.showName = handle.name;
+  pickText.innerHTML = `已选择源目录：<b>${escapeHtml(handle.name)}</b>`;
+  statusPick.className = 'status';
+  statusPick.textContent = '扫描源目录结构中…';
+  previewPanel.hidden = true;
+  reportPanel.hidden = true;
+  try {
+    state.source = await scanSource(handle);
+    renderPreview(state.source);
+    previewPanel.hidden = false;
+    statusPick.className = 'status ok';
+    const langs = state.source.targetLangs;
+    statusPick.textContent = `扫描完成：识别到 ${langs.length} 个目标语种，点击「执行重组」开始`;
+  } catch (e) {
+    state.rootHandle = null;
+    statusPick.className = 'status err';
+    statusPick.textContent = '扫描失败：' + e.message;
+  }
+}
+
+pickDrop.addEventListener('click', async () => {
+  if (!window.showDirectoryPicker) return;
+  try {
+    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    await useRootHandle(handle);
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      statusPick.className = 'status';
+      statusPick.textContent = '已取消选择';
+    } else {
+      statusPick.className = 'status err';
+      statusPick.textContent = '选择目录失败：' + e.message;
+    }
+  }
+});
+
+['dragenter', 'dragover'].forEach(evt => {
+  pickDrop.addEventListener(evt, (e) => {
+    e.preventDefault(); e.stopPropagation();
+    pickDrop.classList.add('dz-hover');
+  });
+});
+['dragleave', 'drop'].forEach(evt => {
+  pickDrop.addEventListener(evt, (e) => {
+    e.preventDefault(); e.stopPropagation();
+    pickDrop.classList.remove('dz-hover');
+  });
+});
+pickDrop.addEventListener('drop', async (e) => {
+  if (!window.showDirectoryPicker) return;
+  const items = e.dataTransfer?.items;
+  if (!items) return;
+  try {
+    let dirHandle = null;
+    for (const item of items) {
+      const getHandle = item.getAsFileSystemHandle ? item.getAsFileSystemHandle() : null;
+      if (!getHandle) continue;
+      const h = await getHandle;
+      if (h && h.kind === 'directory') { dirHandle = h; break; }
+    }
+    if (dirHandle) { await useRootHandle(dirHandle); return; }
+    statusPick.className = 'status err';
+    statusPick.textContent = '请拖入文件夹，而非单个文件';
+  } catch (err) {
+    statusPick.className = 'status err';
+    statusPick.textContent = '拖入目录失败：' + (err.message || err.name);
+  }
+});
+
+// ------- 扫描源结构 -------
+async function scanSource(rootHandle) {
+  const catMap = {}; // id -> { name, handle, langs: Set }
+  const langSet = new Set();
+  let xlsxFile = null; // { handle, name }
+
+  for await (const entry of rootHandle.values()) {
+    if (entry.kind === 'directory') {
+      const cat = CATEGORIES.find(c => entry.name.includes(c.key));
+      if (cat) {
+        catMap[cat.id] = { name: entry.name, handle: entry, langs: new Set() };
+      }
+    }
+  }
+
+  // 对 VO/DUB/SUB 扫描语种子文件夹
+  for (const catId of ['VO', 'DUB', 'SUB']) {
+    const cat = catMap[catId];
+    if (!cat) continue;
+    for await (const entry of cat.handle.values()) {
+      if (entry.kind === 'directory' && LANG_FULL[entry.name]) {
+        cat.langs.add(entry.name);
+        langSet.add(entry.name);
+      }
+    }
+  }
+
+  // 递归查找 xlsx（取第一个）
+  async function findXlsx(dirHandle) {
+    for await (const entry of dirHandle.values()) {
+      if (entry.kind === 'file' && /\.xlsx$/i.test(entry.name)) {
+        return { handle: entry, name: entry.name };
+      }
+      if (entry.kind === 'directory') {
+        const found = await findXlsx(entry);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+  xlsxFile = await findXlsx(rootHandle);
+
+  const allLangs = Array.from(langSet).sort();
+  const targetLangs = allLangs.filter(l => l !== BASE_LANG);
+
+  return { catMap, allLangs, targetLangs, xlsxFile };
+}
+
+// ------- 输出子文件夹名生成 -------
+function outputSubFolders(langCode) {
+  const c = LANG_CHAR[langCode];
+  return [
+    { id: 'ORIG', name: '原剧',         op: 'copy' },
+    { id: 'CLEAN',name: '净版视频',     op: 'copy' },
+    { id: 'SUB',  name: `英${c}字幕`,   op: 'copy' },
+    { id: 'VO',   name: `英${c}旁白`,   op: 'copy' },
+    { id: 'DUB',  name: `${c}语压制视频`,op: 'copy' },
+  ];
+}
+
+// ------- 渲染预览 -------
+function renderPreview(src) {
+  const catsFound = CATEGORIES.map(c => {
+    const found = !!src.catMap[c.id];
+    return `<span class="reorg-cat-chip ${found ? 'found' : 'missing'}">${c.label}${found ? ' ✓' : ' ✗'}</span>`;
+  }).join('');
+
+  const langChips = src.allLangs.map(l => {
+    const isBase = l === BASE_LANG;
+    return `<span class="reorg-cat-chip ${isBase ? '' : 'found'}">${LANG_FULL[l]} (${l})${isBase ? ' 基准' : ''}</span>`;
+  }).join('');
+
+  scanSummary.innerHTML = `
+    <div><b>剧名：</b>${escapeHtml(state.showName)}</div>
+    <div style="margin-top:0.3rem"><b>类别文件夹：</b>${catsFound}</div>
+    <div style="margin-top:0.3rem"><b>识别语种：</b>${langChips}</div>
+    <div style="margin-top:0.3rem"><b>xlsx：</b>${src.xlsxFile ? escapeHtml(src.xlsxFile.name) + '（将复制为「本地化清单.xlsx」）' : '<span style="color:#c0392b">未找到</span>'}</div>
+    <div style="margin-top:0.3rem;color:#2e8b6e">ℹ 所有操作均为复制，源文件夹保持不变</div>
+  `;
+
+  let html = '<div class="reorg-tree">';
+  for (const lang of src.targetLangs) {
+    const fullName = LANG_FULL[lang];
+    const outputName = `${fullName} ${state.showName}`;
+    const subs = outputSubFolders(lang);
+    let itemsHtml = '';
+    for (const sub of subs) {
+      const cat = src.catMap[sub.id];
+      let available = false;
+      let srcPath = '（源缺失）';
+      if (cat) {
+        if (['ORIG', 'CLEAN'].includes(sub.id)) {
+          available = true;
+          srcPath = cat.name;
+        } else {
+          available = cat.langs.has(lang);
+          srcPath = available ? `${cat.name}/${lang}` : `${cat.name}/${lang}（不存在）`;
+        }
+      }
+      const opLabel = '复制';
+      const opCls = 'op-copy';
+      itemsHtml += `<div class="reorg-item">
+        <span class="${opCls}">${opLabel}</span>
+        <span class="target">${escapeHtml(sub.name)}</span>
+        <span class="src">${escapeHtml(srcPath)}</span>
+        <span>${available ? '' : '<span style="color:#c0392b">跳过</span>'}</span>
+      </div>`;
+    }
+    // xlsx 行
+    const xlsxAvail = !!src.xlsxFile;
+    itemsHtml += `<div class="reorg-item">
+      <span class="op-copy">复制</span>
+      <span class="target">本地化清单.xlsx</span>
+      <span class="src">${xlsxAvail ? escapeHtml(src.xlsxFile.name) : '（未找到 xlsx）'}</span>
+      <span>${xlsxAvail ? '' : '<span style="color:#c0392b">跳过</span>'}</span>
+    </div>`;
+
+    html += `<div class="reorg-lang-group">
+      <div class="reorg-lang-head">
+        <span><span class="reorg-output-name">${escapeHtml(outputName)}</span></span>
+        <span class="lang-code">${lang}</span>
+      </div>
+      ${itemsHtml}
+    </div>`;
+  }
+  if (src.targetLangs.length === 0) {
+    html += '<div class="status err">未找到除英语外的其他语种，无法产出输出</div>';
+  }
+  html += '</div>';
+  previewDetail.innerHTML = html;
+}
+
+// ------- 执行重组 -------
+btnExec.addEventListener('click', async () => {
+  if (!state.rootHandle || !state.source) return;
+  btnExec.disabled = true;
+  btnReScan.disabled = true;
+  reportPanel.hidden = false;
+  reportContent.innerHTML = '<div class="status">执行中…</div>';
+
+  try {
+    const result = await executeReorganize(state.rootHandle, state.source, state.showName);
+    renderReport(result);
+  } catch (e) {
+    reportContent.innerHTML = `<div class="status err">执行失败：${escapeHtml(e.message)}</div>`;
+  } finally {
+    btnExec.disabled = false;
+    btnReScan.disabled = false;
+  }
+});
+
+async function executeReorganize(rootHandle, src, showName) {
+  const results = []; // 每个语种一个结果
+
+  for (const lang of src.targetLangs) {
+    const fullName = LANG_FULL[lang];
+    const outputName = `${fullName} ${showName}`;
+    const langResult = { outputName, lang, items: [] };
+
+    // 检查输出父文件夹是否已存在
+    let outputHandle = null;
+    let outputOk = true;
+    try {
+      outputHandle = await rootHandle.getDirectoryHandle(outputName, { create: true });
+    } catch (e) {
+      outputOk = false;
+      langResult.items.push({ target: outputName, op: '创建父文件夹', ok: false, error: e.message });
+    }
+    if (!outputOk) { results.push(langResult); continue; }
+
+    const subs = outputSubFolders(lang);
+    for (const sub of subs) {
+      const cat = src.catMap[sub.id];
+      if (!cat) {
+        langResult.items.push({ target: sub.name, op: sub.op, ok: false, error: '源类别文件夹缺失' });
+        continue;
+      }
+      try {
+        if (['ORIG', 'CLEAN'].includes(sub.id)) {
+          // 复制整个类别文件夹内容到输出子文件夹
+          const dst = await outputHandle.getDirectoryHandle(sub.name, { create: true });
+          await copyDirContents(cat.handle, dst);
+          langResult.items.push({ target: sub.name, op: '复制', ok: true });
+        } else {
+          // 复制 VO/DUB/SUB/<lang> 内容到输出子文件夹（不删除源）
+          let srcSubHandle = null;
+          try {
+            srcSubHandle = await cat.handle.getDirectoryHandle(lang);
+          } catch (e) {
+            langResult.items.push({ target: sub.name, op: '复制', ok: false, error: `源 ${cat.name}/${lang} 不存在` });
+            continue;
+          }
+          const dst = await outputHandle.getDirectoryHandle(sub.name, { create: true });
+          await copyDirContents(srcSubHandle, dst);
+          langResult.items.push({ target: sub.name, op: '复制', ok: true });
+        }
+      } catch (e) {
+        langResult.items.push({ target: sub.name, op: '复制', ok: false, error: e.message });
+      }
+    }
+
+    // xlsx 复制
+    if (src.xlsxFile) {
+      try {
+        const dstFile = await outputHandle.getFileHandle('本地化清单.xlsx', { create: true });
+        const w = await dstFile.createWritable();
+        await w.write(await src.xlsxFile.handle.getFile());
+        await w.close();
+        langResult.items.push({ target: '本地化清单.xlsx', op: '复制', ok: true });
+      } catch (e) {
+        langResult.items.push({ target: '本地化清单.xlsx', op: '复制', ok: false, error: e.message });
+      }
+    } else {
+      langResult.items.push({ target: '本地化清单.xlsx', op: '复制', ok: false, error: '源目录未找到 xlsx' });
+    }
+
+    results.push(langResult);
+  }
+  return results;
+}
+
+// ------- 复制目录内容（srcHandle 内所有条目 → dstHandle） -------
+async function copyDirContents(srcHandle, dstHandle) {
+  for await (const entry of srcHandle.values()) {
+    if (entry.kind === 'file') {
+      const srcFile = await entry.getFile();
+      const dstFile = await dstHandle.getFileHandle(entry.name, { create: true });
+      const w = await dstFile.createWritable();
+      await w.write(srcFile);
+      await w.close();
+    } else if (entry.kind === 'directory') {
+      const subDst = await dstHandle.getDirectoryHandle(entry.name, { create: true });
+      const subSrc = await srcHandle.getDirectoryHandle(entry.name);
+      await copyDirContents(subSrc, subDst);
+    }
+  }
+}
+
+// （所有操作均为复制，无需移动/删除函数）
+
+// ------- 渲染报告 -------
+function renderReport(results) {
+  let html = '';
+  for (const r of results) {
+    const okCount = r.items.filter(i => i.ok).length;
+    const total = r.items.length;
+    html += `<div class="reorg-report-group">
+      <h4 style="margin:0 0 0.3rem">${escapeHtml(r.outputName)}（${okCount}/${total} 成功）</h4>`;
+    for (const item of r.items) {
+      const cls = item.ok ? 'ok' : (item.error ? 'fail' : 'skip');
+      const icon = item.ok ? '✓' : '✗';
+      html += `<div class="reorg-report-item ${cls}">${icon} [${item.op}] ${escapeHtml(item.target)}${item.error ? ' — ' + escapeHtml(item.error) : ''}</div>`;
+    }
+    html += '</div>';
+  }
+  reportContent.innerHTML = html;
+}
+
+// ------- 重新选择 -------
+btnReScan.addEventListener('click', () => {
+  state.rootHandle = null;
+  state.showName = '';
+  state.source = null;
+  previewPanel.hidden = true;
+  reportPanel.hidden = true;
+  pickText.textContent = '点击选择源根目录，或直接拖入文件夹';
+  statusPick.className = 'status';
+  statusPick.textContent = '';
+});
+
+// ------- 工具 -------
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+</script>
+</body>
+</html>
