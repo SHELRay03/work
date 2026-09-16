@@ -2072,6 +2072,55 @@ button.btn-secondary:hover:not(:disabled) {
   font-style: italic;
 }
 
+/* 超长时间轴扫描结果 */
+.hit-table tr.long-row td {
+  border-left: 3px solid #d9534f;
+  background: rgba(217, 83, 79, 0.05);
+}
+.long-dur {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 700;
+  color: #c0392b;
+  white-space: nowrap;
+}
+.long-count {
+  text-align: center;
+  font-weight: 700;
+  color: #c0392b;
+}
+tr.long-contained-row td {
+  background: #fdf6f5;
+  padding: 0.4rem 0.8rem 0.55rem 1.1rem;
+}
+.long-contained {
+  font-size: 0.74rem;
+  color: #8a5a57;
+}
+.long-contained-item {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  padding: 0.15rem 0;
+  border-bottom: 1px dashed rgba(217, 83, 79, 0.2);
+}
+.long-contained-item:last-child { border-bottom: none; }
+.long-contained-idx {
+  font-weight: 700;
+  color: #c0392b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  flex: 0 0 auto;
+}
+.long-contained-tc {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #9a6a67;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.long-contained-text {
+  color: var(--text-muted, #6b7a6f);
+  word-break: break-all;
+}
+
 /* 目标语言行 */
 .target-list {
   display: flex;

@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="style.css?v=8" />
+  <link rel="stylesheet" href="style.css?v=9" />
 </head>
 <body>
   <div class="bg-layer" aria-hidden="true"></div>
@@ -39,7 +39,7 @@
           <input type="text" id="folderName" class="folder-name-input" placeholder="fixed" />
         </label>
       </div>
-      <div class="actions"><button type="button" id="btnFix">批量修复</button><button type="button" id="btnScanDigits" class="btn-ghost">扫描阿拉伯数字</button></div>
+      <div class="actions"><button type="button" id="btnFix">批量修复</button><button type="button" id="btnScanDigits" class="btn-ghost">扫描阿拉伯数字</button><button type="button" id="btnScanLong" class="btn-ghost">扫描超长轴</button></div>
       <div class="status" id="statusFix"></div>
     </section>
 
@@ -48,6 +48,13 @@
       <p class="panel-sub">仅识别字幕正文中的阿拉伯数字位置（不含时间轴与序号）。只读展示，不修改原文件。</p>
       <div class="status" id="statusDigit"></div>
       <div id="digitResult" class="scan-result" hidden></div>
+    </section>
+
+    <section class="panel" id="longPanel" hidden>
+      <div class="panel-head"><span class="panel-dot"></span><h2>超长时间轴识别结果</h2></div>
+      <p class="panel-sub">标注时间范围完整包含了其他字幕的超长字幕（疑似两条字幕粘连）。只读展示，不修改原文件。</p>
+      <div class="status" id="statusLong"></div>
+      <div id="longResult" class="scan-result" hidden></div>
     </section>
   </main>
   <script src="srt.js?v=8"></script>
@@ -302,6 +309,156 @@
         tbody.appendChild(tr);
       }
       digitResult.appendChild(table);
+    }
+
+    // ------- 超长时间轴识别（只读定位） -------
+    // 判定：字幕 A 的时间范围完整包含字幕 B（B.start >= A.start 且 B.end <= A.end），
+    // 且 A 比 B 长至少 100ms（排除时间范围完全相同的重复块，那属于另一类问题）。
+    const CONTAIN_MIN_GAP_MS = 100;
+    const btnScanLong = document.getElementById('btnScanLong');
+    const longPanel   = document.getElementById('longPanel');
+    const longResult  = document.getElementById('longResult');
+    const statusLong  = document.getElementById('statusLong');
+
+    btnScanLong.addEventListener('click', async () => {
+      if (!sourceType) {
+        alert('请先上传或拖入字幕（ZIP / 文件夹）');
+        return;
+      }
+      btnScanLong.disabled = true;
+      statusLong.className = 'status';
+      statusLong.textContent = '扫描中…';
+      longPanel.hidden = false;
+      longResult.hidden = true;
+
+      try {
+        const files = await loadFixSubtitleFiles();
+        const allHits = [];
+        const fileHitCount = {};
+
+        for (const f of files) {
+          const subs = parseSrt(f.content);
+          for (let i = 0; i < subs.length; i++) {
+            const a = subs[i];
+            const durA = a.end - a.start;
+            const contained = [];
+            for (let j = 0; j < subs.length; j++) {
+              if (j === i) continue;
+              const b = subs[j];
+              const durB = b.end - b.start;
+              if (b.start >= a.start && b.end <= a.end && durA - durB >= CONTAIN_MIN_GAP_MS) {
+                contained.push({
+                  subIdx: j + 1,
+                  start: b.start,
+                  end: b.end,
+                  text: flattenText(b.text),
+                });
+              }
+            }
+            if (contained.length > 0) {
+              allHits.push({
+                fileName: f.name,
+                subIdx: i + 1,
+                start: a.start,
+                end: a.end,
+                duration: durA,
+                text: flattenText(a.text),
+                contained,
+              });
+              fileHitCount[f.name] = (fileHitCount[f.name] || 0) + 1;
+            }
+          }
+        }
+
+        renderLongResult(allHits, fileHitCount);
+        statusLong.className = 'status ok';
+        statusLong.textContent = `扫描完成：共 ${allHits.length} 条超长时间轴，涉及 ${Object.keys(fileHitCount).length} 个文件`;
+      } catch (e) {
+        statusLong.className = 'status err';
+        statusLong.textContent = '扫描失败：' + e.message;
+      } finally {
+        btnScanLong.disabled = false;
+      }
+    });
+
+    function renderLongResult(hits, fileHitCount) {
+      longResult.hidden = false;
+      longResult.innerHTML = '';
+
+      // 文件分布摘要
+      const summary = document.createElement('div');
+      summary.className = 'scan-summary';
+      const dist = Object.entries(fileHitCount)
+        .sort((a, b) => b[1] - a[1])
+        .map(([k, v]) => `${k.split('/').pop()} (${v})`)
+        .join('  ');
+      summary.textContent = `命中分布：` + dist;
+      longResult.appendChild(summary);
+
+      // 命中表（每条命中后跟一行展开，列出被包含的字幕）
+      const table = document.createElement('table');
+      table.className = 'hit-table';
+      table.innerHTML = `
+        <thead><tr>
+          <th style="width:2.5rem">#</th>
+          <th>文件</th>
+          <th style="width:3rem">字幕#</th>
+          <th style="width:13rem">时间轴</th>
+          <th style="width:5.5rem">时长</th>
+          <th style="width:3.5rem">包含</th>
+          <th>本句内容</th>
+        </tr></thead>
+        <tbody></tbody>`;
+      const tbody = table.querySelector('tbody');
+
+      const limit = 500;
+      const showCount = Math.min(hits.length, limit);
+      for (let i = 0; i < showCount; i++) {
+        const h = hits[i];
+        const tr = document.createElement('tr');
+        tr.className = 'long-row';
+        tr.innerHTML = `
+          <td>${i + 1}</td>
+          <td class="hit-fname" title="${escapeHtmlAttr(h.fileName)}">${escapeHtml(h.fileName.split('/').pop())}</td>
+          <td>${h.subIdx}</td>
+          <td>${formatTimecode(h.start)} → ${formatTimecode(h.end)}</td>
+          <td class="long-dur">${formatDuration(h.duration)}</td>
+          <td class="long-count">${h.contained.length}</td>
+          <td class="hit-ctx">${escapeHtml(h.text)}</td>`;
+        tbody.appendChild(tr);
+
+        // 展开行：被该字幕包含的字幕列表
+        const detailTr = document.createElement('tr');
+        detailTr.className = 'long-contained-row';
+        const items = h.contained.map(c =>
+          `<div class="long-contained-item">
+             <span class="long-contained-idx">#${c.subIdx}</span>
+             <span class="long-contained-tc">${formatTimecode(c.start)} → ${formatTimecode(c.end)}</span>
+             <span class="long-contained-text">${escapeHtml(truncate(c.text, 60))}</span>
+           </div>`).join('');
+        detailTr.innerHTML = `<td colspan="7"><div class="long-contained">被包含的字幕：${items}</div></td>`;
+        tbody.appendChild(detailTr);
+      }
+      if (hits.length > limit) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td colspan="7" class="hit-more">…省略 ${hits.length - limit} 条</td>`;
+        tbody.appendChild(tr);
+      }
+      longResult.appendChild(table);
+    }
+
+    function flattenText(text) {
+      return String(text || '').replace(/\r\n/g, '\n').replace(/\n/g, ' ').trim();
+    }
+    function truncate(s, n) {
+      return s.length > n ? s.slice(0, n) + '…' : s;
+    }
+    function formatDuration(ms) {
+      const totalSec = ms / 1000;
+      if (totalSec < 60) return totalSec.toFixed(2) + 's';
+      const m = Math.floor(totalSec / 60);
+      const s = (totalSec - m * 60).toFixed(2);
+      return `${m}m${s.padStart(5, '0')}s`;
     }
 
     function highlightDigit(text, start, len) {
