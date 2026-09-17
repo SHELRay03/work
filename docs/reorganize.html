@@ -159,6 +159,15 @@
   height: 100%; background: var(--mint, #5ec9a0); width: 0%;
   transition: width 0.2s ease;
 }
+.progress-fill.indeterminate {
+  width: 30% !important;
+  animation: indeterminate-slide 1.2s ease-in-out infinite;
+}
+@keyframes indeterminate-slide {
+  0%   { margin-left: -30%; }
+  50%  { margin-left: 100%; }
+  100% { margin-left: -30%; }
+}
 .progress-file {
   margin-top: 0.4rem; font-size: 0.74rem; color: var(--text-muted, #6b7a6f);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -451,7 +460,7 @@ btnExec.addEventListener('click', async () => {
   reportPanel.hidden = false;
   progressBox.hidden = false;
   progressStage.textContent = '准备中…';
-  progressCount.textContent = '0 / 0';
+  progressCount.textContent = '已复制 0 个';
   progressFill.style.width = '0%';
   progressFile.textContent = '';
   reportContent.innerHTML = '<div class="status">执行中…</div>';
@@ -459,14 +468,17 @@ btnExec.addEventListener('click', async () => {
   try {
     const result = await executeReorganize(
       state.rootHandle, state.source, state.showName,
-      ({ stage, path, copied, total }) => {
+      ({ stage, path, copied }) => {
         progressStage.textContent = stage || '复制中…';
-        progressCount.textContent = `${copied} / ${total}`;
+        progressCount.textContent = `已复制 ${copied} 个`;
         progressFile.textContent = path || '';
-        const pct = total > 0 ? Math.min(100, (copied / total) * 100) : 0;
-        progressFill.style.width = pct.toFixed(1) + '%';
+        // 无总数时用不确定动画（条状循环移动）
+        progressFill.style.width = '100%';
+        progressFill.classList.add('indeterminate');
       }
     );
+    progressFill.classList.remove('indeterminate');
+    progressFill.style.width = '100%';
     progressBox.hidden = true;
     renderReport(result);
   } catch (e) {
@@ -497,32 +509,13 @@ async function executeReorganize(rootHandle, src, showName, onProgress) {
     if (!outputOk) { results.push(langResult); continue; }
 
     const subs = outputSubFolders(lang);
-    // 预扫描本语种需要复制的文件总数
-    let totalFiles = 0;
-    for (const sub of subs) {
-      const cat = src.catMap[sub.id];
-      if (!cat) continue;
-      try {
-        if (sub.srcLangs[0] === '*') {
-          totalFiles += await countFiles(cat.handle);
-        } else {
-          for (const sl of sub.srcLangs) {
-            try {
-              const subHandle = await cat.handle.getDirectoryHandle(sl);
-              totalFiles += await countFiles(subHandle);
-            } catch (e) {}
-          }
-        }
-      } catch (e) {}
-    }
-    if (src.xlsxFile) totalFiles += 1;
-
+    // 跳过预扫描，进度改为"已复制 N 个"
     let copied = 0;
     const progressCb = (path, ok, err) => {
       copied++;
       onProgress && onProgress({
         stage: `${outputName} / 复制中`,
-        path, copied, total: totalFiles,
+        path, copied,
       });
     };
 
@@ -578,13 +571,25 @@ async function executeReorganize(rootHandle, src, showName, onProgress) {
         const w = await dstFile.createWritable();
         const srcFile = await src.xlsxFile.handle.getFile();
         if (srcFile.stream && typeof srcFile.stream === 'function') {
-          await w.write(srcFile.stream());
+          try {
+            const reader = srcFile.stream().getReader();
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              await w.write({ type: 'write', data: value });
+            }
+            await reader.releaseLock();
+          } catch (streamErr) {
+            try { await w.seek(0); } catch (_) {}
+            const buf = await srcFile.arrayBuffer();
+            await w.write({ type: 'write', data: buf });
+          }
         } else {
           await w.write(srcFile);
         }
         await w.close();
         copied++;
-        onProgress && onProgress({ stage: `${outputName} / xlsx`, path: '本地化清单.xlsx', copied, total: totalFiles });
+        onProgress && onProgress({ stage: `${outputName} / xlsx`, path: '本地化清单.xlsx', copied });
         langResult.items.push({ target: '本地化清单.xlsx', op: '复制', ok: true });
       } catch (e) {
         langResult.items.push({ target: '本地化清单.xlsx', op: '复制', ok: false, error: e.message });
@@ -598,66 +603,92 @@ async function executeReorganize(rootHandle, src, showName, onProgress) {
   return results;
 }
 
-// ------- 复制目录内容（流式分块 + 进度 + 错误恢复） -------
-// progress(path, ok, err) 每个文件回调；errors 累计失败列表
-async function copyDirContents(srcHandle, dstHandle, progress, pathPrefix, errors) {
-  for await (const entry of srcHandle.values()) {
-    if (entry.kind === 'file') {
-      const curPath = pathPrefix ? `${pathPrefix}/${entry.name}` : entry.name;
-      try {
-        const srcFile = await entry.getFile();
-        const dstFile = await dstHandle.getFileHandle(entry.name, { create: true });
-        const w = await dstFile.createWritable();
-        // 优先用 stream 分块写入（低内存 + 可靠落盘）
-        let written = false;
-        if (srcFile.stream && typeof srcFile.stream === 'function') {
-          try {
-            const reader = srcFile.stream().getReader();
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              await w.write({ type: 'write', data: value });
-            }
-            await reader.releaseLock();
-            written = true;
-          } catch (streamErr) {
-            // 流式失败 → 回退到 arrayBuffer
-            try { await w.seek(0); } catch (_) {}
-            const buf = await srcFile.arrayBuffer();
-            await w.write({ type: 'write', data: buf });
-            written = true;
-          }
-        }
-        if (!written) {
-          const buf = await srcFile.arrayBuffer();
-          await w.write({ type: 'write', data: buf });
-        }
-        await w.close();
-        progress && progress(curPath, true);
-      } catch (e) {
-        errors && errors.push({ path: curPath, error: e.message });
-        progress && progress(curPath, false, e.message);
-      }
-    } else if (entry.kind === 'directory') {
-      const subDst = await dstHandle.getDirectoryHandle(entry.name, { create: true });
-      const subSrc = await srcHandle.getDirectoryHandle(entry.name);
-      const subPrefix = pathPrefix ? `${pathPrefix}/${entry.name}` : entry.name;
-      await copyDirContents(subSrc, subDst, progress, subPrefix, errors);
+// ------- 并发池 -------
+// 限制最大并发数；逐个 await 队列中的 Promise
+async function runPool(tasks, concurrency = 6) {
+  const queue = tasks.slice();
+  const workers = new Array(Math.min(concurrency, queue.length));
+  for (let i = 0; i < workers.length; i++) workers[i] = worker();
+  return Promise.all(workers);
+
+  async function worker() {
+    while (queue.length > 0) {
+      const task = queue.shift();
+      if (!task) break;
+      await task();
     }
   }
 }
 
-// ------- 预扫描统计文件总数 -------
-async function countFiles(dirHandle) {
-  let n = 0;
-  for await (const entry of dirHandle.values()) {
-    if (entry.kind === 'file') n++;
-    else if (entry.kind === 'directory') {
-      const sub = await dirHandle.getDirectoryHandle(entry.name);
-      n += await countFiles(sub);
+// 复制单个文件（流式分块写入）
+async function copyOneFile(srcEntry, dstHandle, curPath, progress, errors) {
+  try {
+    const srcFile = await srcEntry.getFile();
+    const dstFile = await dstHandle.getFileHandle(srcEntry.name, { create: true });
+    const w = await dstFile.createWritable();
+    let written = false;
+    if (srcFile.stream && typeof srcFile.stream === 'function') {
+      try {
+        const reader = srcFile.stream().getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          await w.write({ type: 'write', data: value });
+        }
+        await reader.releaseLock();
+        written = true;
+      } catch (streamErr) {
+        try { await w.seek(0); } catch (_) {}
+        const buf = await srcFile.arrayBuffer();
+        await w.write({ type: 'write', data: buf });
+        written = true;
+      }
+    }
+    if (!written) {
+      const buf = await srcFile.arrayBuffer();
+      await w.write({ type: 'write', data: buf });
+    }
+    await w.close();
+    progress && progress(curPath, true);
+  } catch (e) {
+    errors && errors.push({ path: curPath, error: e.message });
+    progress && progress(curPath, false, e.message);
+  }
+}
+
+// ------- 复制目录内容（并发 + 进度 + 错误恢复） -------
+// concurrency: 文件级并发数（默认 6）
+async function copyDirContents(srcHandle, dstHandle, progress, pathPrefix, errors, concurrency = 6) {
+  const tasks = []; // 文件复制任务
+  for await (const entry of srcHandle.values()) {
+    if (entry.kind === 'file') {
+      const curPath = pathPrefix ? `${pathPrefix}/${entry.name}` : entry.name;
+      tasks.push(() => copyOneFile(entry, dstHandle, curPath, progress, errors));
+    } else if (entry.kind === 'directory') {
+      // 子目录递归（仍保持原语种子文件夹结构）
+      const subDst = await dstHandle.getDirectoryHandle(entry.name, { create: true });
+      const subSrc = await srcHandle.getDirectoryHandle(entry.name);
+      const subPrefix = pathPrefix ? `${pathPrefix}/${entry.name}` : entry.name;
+      // 先递归建子目录、收集子目录内文件任务
+      await collectTasks(subSrc, subDst, subPrefix, tasks, progress, errors);
     }
   }
-  return n;
+  await runPool(tasks, concurrency);
+}
+
+// 递归收集任务（不立即执行，仅建目录 + push 任务到 tasks）
+async function collectTasks(srcHandle, dstHandle, pathPrefix, tasks, progress, errors) {
+  for await (const entry of srcHandle.values()) {
+    if (entry.kind === 'file') {
+      const curPath = pathPrefix ? `${pathPrefix}/${entry.name}` : entry.name;
+      tasks.push(() => copyOneFile(entry, dstHandle, curPath, progress, errors));
+    } else if (entry.kind === 'directory') {
+      const subDst = await dstHandle.getDirectoryHandle(entry.name, { create: true });
+      const subSrc = await srcHandle.getDirectoryHandle(entry.name);
+      const subPrefix = pathPrefix ? `${pathPrefix}/${entry.name}` : entry.name;
+      await collectTasks(subSrc, subDst, subPrefix, tasks, progress, errors);
+    }
+  }
 }
 
 // （所有操作均为复制，无需移动/删除函数）
