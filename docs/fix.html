@@ -165,9 +165,19 @@
             }
           }
 
-          // 检查文件大小与是否包含中文
+          // 检查文件大小、内容行数与是否包含中文
           const hasChinese = /[\u4e00-\u9fff]/.test(subFile.content);
-          const report = { fileName: subFile.name, size: subFile.size, hasChinese };
+          const nonEmptyLines = String(subFile.content)
+            .split(/\r\n|\r|\n/)
+            .map(l => l.trim())
+            .filter(l => l.length > 0).length;
+          // 小文件异常判定：≤1KB 且（内容空白 或 只有一行）
+          let smallReason = null;
+          if (subFile.size <= 1024) {
+            if (nonEmptyLines === 0) smallReason = '空白';
+            else if (nonEmptyLines === 1) smallReason = '仅一行';
+          }
+          const report = { fileName: subFile.name, size: subFile.size, hasChinese, smallReason };
           reports.push(report);
 
           const outContent = generateSrt(subs);
@@ -176,10 +186,12 @@
           processedCount++;
         }
 
-        const smallFiles = reports.filter(r => r.size <= 1024);
-        const smallFileNames = smallFiles.map(r => r.fileName.split('/').pop()).join('、');
+        const smallFiles = reports.filter(r => r.smallReason !== null);
+        const smallFileNames = smallFiles
+          .map(r => `${r.fileName.split('/').pop()}（${r.smallReason}）`)
+          .join('、');
         const smallFileHint = smallFiles.length > 0
-          ? `，其中 ${smallFiles.length} 个为小文件（≤1KB）：${smallFileNames}`
+          ? `，其中 ${smallFiles.length} 个为异常小文件（≤1KB 且空白/仅一行）：${smallFileNames}`
           : '';
 
         const chineseFiles = reports.filter(r => r.hasChinese);
