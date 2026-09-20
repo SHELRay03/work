@@ -2121,6 +2121,84 @@ tr.long-contained-row td {
   word-break: break-all;
 }
 
+/* ------- 健康检查：chip + 折叠卡片 ------- */
+.health-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.6rem 0 0.8rem;
+}
+.health-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  border: 1px solid var(--line, #dde5df);
+  background: var(--surface, #f5f8f6);
+  color: var(--text-muted, #6b7a6f);
+}
+.health-chip.warn.has-hit   { background: #fff5e0; border-color: #f0c878; color: #9a6800; }
+.health-chip.danger.has-hit { background: #fdecec; border-color: #f0a0a0; color: #b02020; }
+.health-chip.pass           { background: #eaf6ee; border-color: #bbe4c8; color: #3a7a52; }
+.health-chip .chip-count    { font-variant-numeric: tabular-nums; }
+
+.health-card {
+  border: 1px solid var(--line, #dde5df);
+  border-left: 4px solid var(--line, #dde5df);
+  border-radius: var(--radius, 10px);
+  margin-bottom: 0.6rem;
+  background: var(--surface, #f8faf9);
+  overflow: hidden;
+}
+.health-card.warn    { border-left-color: #f0c878; }
+.health-card.danger  { border-left-color: #f0a0a0; }
+.health-card > summary {
+  cursor: pointer;
+  padding: 0.55rem 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  list-style: none;
+  user-select: none;
+}
+.health-card > summary::-webkit-details-marker { display: none; }
+.health-card > summary::before {
+  content: '▸';
+  display: inline-block;
+  width: 1rem;
+  color: var(--text-muted, #9aa5a0);
+  transition: transform 0.15s;
+}
+.health-card[open] > summary::before { transform: rotate(90deg); }
+.health-card .card-title {
+  font-weight: 600;
+  color: var(--text, #2a3a30);
+}
+.health-card .card-count {
+  font-size: 0.78rem;
+  color: var(--text-muted, #6b7a6f);
+  font-variant-numeric: tabular-nums;
+}
+.health-card .card-body {
+  padding: 0.5rem 0.9rem 0.7rem 2rem;
+  border-top: 1px solid var(--line, #e4ebe7);
+}
+.health-card .empty-pass {
+  padding: 0.6rem 0;
+  color: #3a7a52;
+  font-size: 0.88rem;
+}
+.health-card .hit-table { font-size: 0.84rem; }
+.health-card tr.reverse-row td,
+.health-card tr.empty-row td,
+.health-card tr.dup-row td,
+.health-card tr.overlap-row td {
+  background: rgba(240, 160, 160, 0.04);
+}
+
 /* 目标语言行 */
 .target-list {
   display: flex;

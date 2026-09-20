@@ -39,25 +39,19 @@
           <input type="text" id="folderName" class="folder-name-input" placeholder="fixed" />
         </label>
       </div>
-      <div class="actions"><button type="button" id="btnFix">批量修复</button><button type="button" id="btnScanDigits" class="btn-ghost">扫描阿拉伯数字</button><button type="button" id="btnScanLong" class="btn-ghost">扫描超长轴</button></div>
+      <div class="actions"><button type="button" id="btnFix">批量修复</button><button type="button" id="btnHealth" class="btn-ghost">健康检查</button></div>
       <div class="status" id="statusFix"></div>
     </section>
 
-    <section class="panel" id="digitPanel" hidden>
-      <div class="panel-head"><span class="panel-dot"></span><h2>阿拉伯数字识别结果</h2></div>
-      <p class="panel-sub">仅识别字幕正文中的阿拉伯数字位置（不含时间轴与序号）。只读展示，不修改原文件。</p>
-      <div class="status" id="statusDigit"></div>
-      <div id="digitResult" class="scan-result" hidden></div>
-    </section>
-
-    <section class="panel" id="longPanel" hidden>
-      <div class="panel-head"><span class="panel-dot"></span><h2>超长时间轴识别结果</h2></div>
-      <p class="panel-sub">标注时间范围完整包含了其他字幕的超长字幕（疑似两条字幕粘连）。只读展示，不修改原文件。</p>
-      <div class="status" id="statusLong"></div>
-      <div id="longResult" class="scan-result" hidden></div>
+    <section class="panel" id="healthPanel" hidden>
+      <div class="panel-head"><span class="panel-dot"></span><h2>字幕健康检查</h2></div>
+      <p class="panel-sub">一次性扫描 6 类异常：阿拉伯数字、超长时间轴、时间倒退、时间重叠、空文本、重复块。只读，不修改原文件。</p>
+      <div class="status" id="statusHealth"></div>
+      <div id="healthChips" class="health-chips" hidden></div>
+      <div id="healthResult" class="scan-result" hidden></div>
     </section>
   </main>
-  <script src="srt.js?v=8"></script>
+  <script src="srt.js?v=9"></script>
   <script>
     const btnFix = document.getElementById('btnFix');
     const statusFix = document.getElementById('statusFix');
@@ -171,7 +165,6 @@
             .split(/\r\n|\r|\n/)
             .map(l => l.trim())
             .filter(l => l.length > 0).length;
-          // 小文件异常判定：≤1KB 且（内容空白 或 只有一行）
           let smallReason = null;
           if (subFile.size <= 1024) {
             if (nonEmptyLines === 0) smallReason = '空白';
@@ -215,250 +208,340 @@
       }
     };
 
-    // ------- 阿拉伯数字识别（只读定位） -------
-    const btnScanDigits = document.getElementById('btnScanDigits');
-    const digitPanel   = document.getElementById('digitPanel');
-    const digitResult  = document.getElementById('digitResult');
-    const statusDigit = document.getElementById('statusDigit');
+    // ------- 字幕健康检查（一次性 6 类扫描，复用 parseSrt 结果） -------
+    const btnHealth      = document.getElementById('btnHealth');
+    const healthPanel    = document.getElementById('healthPanel');
+    const healthChips    = document.getElementById('healthChips');
+    const healthResult   = document.getElementById('healthResult');
+    const statusHealth   = document.getElementById('statusHealth');
+    const CONTAIN_MIN_GAP_MS = 100;
+    const HEALTH_CATEGORIES = [
+      { key: 'digit',    label: '阿拉伯数字',  tone: 'warn' },
+      { key: 'longaxis', label: '超长时间轴',  tone: 'danger' },
+      { key: 'reverse',  label: '时间轴倒退',  tone: 'danger' },
+      { key: 'overlap',  label: '时间轴重叠',  tone: 'warn' },
+      { key: 'empty',    label: '空文本',     tone: 'danger' },
+      { key: 'dup',      label: '重复块',     tone: 'warn' },
+    ];
 
-    btnScanDigits.addEventListener('click', async () => {
-      if (!sourceType) {
-        alert('请先上传或拖入字幕（ZIP / 文件夹）');
-        return;
-      }
-      btnScanDigits.disabled = true;
-      statusDigit.className = 'status';
-      statusDigit.textContent = '扫描中…';
-      digitPanel.hidden = false;
-      digitResult.hidden = true;
-
+    btnHealth.addEventListener('click', async () => {
+      if (!sourceType) { alert('请先上传或拖入字幕（ZIP / 文件夹）'); return; }
+      btnHealth.disabled = true;
+      statusHealth.className = 'status';
+      statusHealth.textContent = '扫描中…';
+      healthPanel.hidden = false;
+      healthChips.hidden = true;
+      healthResult.hidden = true;
       try {
         const files = await loadFixSubtitleFiles();
-        const allHits = [];
-        const fileHitCount = {};
+        const parsed = [];
+        for (const f of files) parsed.push({ name: f.name, subs: parseSrt(f.content) });
+        const results = runHealthChecks(parsed);
+        renderHealthResult(results);
+        const totalHits = Object.values(results).reduce((s, r) => s + r.hits.length, 0);
+        const filesWithHits = new Set();
+        for (const r of Object.values(results)) for (const fn of Object.keys(r.fileCount)) filesWithHits.add(fn);
+        statusHealth.className = 'status ok';
+        statusHealth.textContent = `扫描完成：共 ${totalHits} 处异常，涉及 ${filesWithHits.size} 个文件（共 ${parsed.length} 个文件）`;
+      } catch (e) {
+        statusHealth.className = 'status err';
+        statusHealth.textContent = '扫描失败：' + e.message;
+      } finally {
+        btnHealth.disabled = false;
+      }
+    });
 
-        for (const f of files) {
-          const subs = parseSrt(f.content);
-          for (let i = 0; i < subs.length; i++) {
-            const line = subs[i];
-            if (!line.text) continue;
-            // 字幕正文可能多行，扁平化便于高亮展示
-            const flat = line.text.replace(/\r\n/g, '\n').replace(/\n/g, ' ');
-            const re = /\d+/g;
-            let m;
-            while ((m = re.exec(flat)) !== null) {
-              allHits.push({
-                fileName: f.name,
-                subIdx: i + 1,
-                start: line.start,
-                end: line.end,
-                text: flat,
-                digit: m[0],
-                digitStart: m.index,
+    function runHealthChecks(parsed) {
+      const results = {};
+      for (const c of HEALTH_CATEGORIES) results[c.key] = { hits: [], fileCount: {} };
+      for (const p of parsed) {
+        const { name, subs } = p;
+        const bump = (key) => { results[key].fileCount[name] = (results[key].fileCount[name] || 0) + 1; };
+
+        // 1. 阿拉伯数字
+        for (let i = 0; i < subs.length; i++) {
+          const line = subs[i];
+          if (!line.text) continue;
+          const flat = line.text.replace(/\r\n/g, '\n').replace(/\n/g, ' ');
+          const re = /\d+/g;
+          let m;
+          while ((m = re.exec(flat)) !== null) {
+            results.digit.hits.push({
+              fileName: name, subIdx: i + 1,
+              start: line.start, end: line.end,
+              text: flat, digit: m[0], digitStart: m.index,
+            });
+            bump('digit');
+          }
+        }
+
+        // 2. 超长时间轴（A 包含 B，且 A-B >= 100ms）
+        for (let i = 0; i < subs.length; i++) {
+          const a = subs[i];
+          const durA = a.end - a.start;
+          const contained = [];
+          for (let j = 0; j < subs.length; j++) {
+            if (j === i) continue;
+            const b = subs[j];
+            const durB = b.end - b.start;
+            if (b.start >= a.start && b.end <= a.end && durA - durB >= CONTAIN_MIN_GAP_MS) {
+              contained.push({ subIdx: j + 1, start: b.start, end: b.end, text: flattenText(b.text) });
+            }
+          }
+          if (contained.length > 0) {
+            results.longaxis.hits.push({
+              fileName: name, subIdx: i + 1, start: a.start, end: a.end,
+              duration: durA, text: flattenText(a.text), contained,
+            });
+            bump('longaxis');
+          }
+        }
+
+        // 3. 时间轴倒退（end <= start）
+        for (let i = 0; i < subs.length; i++) {
+          const s = subs[i];
+          if (s.end <= s.start) {
+            results.reverse.hits.push({
+              fileName: name, subIdx: i + 1, start: s.start, end: s.end,
+              duration: s.end - s.start, text: flattenText(s.text),
+            });
+            bump('reverse');
+          }
+        }
+
+        // 4. 时间轴重叠（相邻 i 与 i+1，且不是完整包含）
+        for (let i = 0; i < subs.length - 1; i++) {
+          const a = subs[i], b = subs[i + 1];
+          if (b.start < a.end) {
+            const isContained = b.start >= a.start && b.end <= a.end && (a.end - a.start) - (b.end - b.start) >= CONTAIN_MIN_GAP_MS;
+            if (!isContained) {
+              results.overlap.hits.push({
+                fileName: name, subIdxA: i + 1, subIdxB: i + 2,
+                startA: a.start, endA: a.end, startB: b.start, endB: b.end,
+                overlapMs: a.end - b.start,
+                textA: flattenText(a.text), textB: flattenText(b.text),
               });
-              fileHitCount[f.name] = (fileHitCount[f.name] || 0) + 1;
+              bump('overlap');
             }
           }
         }
 
-        renderDigitResult(allHits, fileHitCount);
-        statusDigit.className = 'status ok';
-        statusDigit.textContent = `扫描完成：共 ${allHits.length} 处阿拉伯数字命中，涉及 ${Object.keys(fileHitCount).length} 个文件`;
-      } catch (e) {
-        statusDigit.className = 'status err';
-        statusDigit.textContent = '扫描失败：' + e.message;
-      } finally {
-        btnScanDigits.disabled = false;
+        // 5. 空文本
+        for (let i = 0; i < subs.length; i++) {
+          const s = subs[i];
+          const text = String(s.text || '');
+          const hasNonEmpty = text.split(/\r\n|\r|\n/).some(l => l.trim().length > 0);
+          if (!hasNonEmpty) {
+            results.empty.hits.push({ fileName: name, subIdx: i + 1, start: s.start, end: s.end });
+            bump('empty');
+          }
+        }
+
+        // 6. 重复块（相同 start+end+text 出现 >= 2 次）
+        const seen = new Map();
+        for (let i = 0; i < subs.length; i++) {
+          const s = subs[i];
+          const key = `${s.start}|${s.end}|${String(s.text || '').trim()}`;
+          if (!seen.has(key)) seen.set(key, []);
+          seen.get(key).push(i + 1);
+        }
+        for (const [key, idxs] of seen) {
+          if (idxs.length >= 2) {
+            const parts = key.split('|');
+            const st = parts[0], ed = parts[1];
+            const txt = parts.slice(2).join('|');
+            results.dup.hits.push({
+              fileName: name, start: Number(st), end: Number(ed),
+              text: txt, subIdxs: idxs, count: idxs.length,
+            });
+            bump('dup');
+          }
+        }
       }
-    });
+      return results;
+    }
 
-    function renderDigitResult(hits, fileHitCount) {
-      digitResult.hidden = false;
-      digitResult.innerHTML = '';
+    function renderHealthResult(results) {
+      healthChips.hidden = false;
+      healthResult.hidden = false;
+      healthChips.innerHTML = '';
+      healthResult.innerHTML = '';
 
-      // 文件分布摘要
+      for (const c of HEALTH_CATEGORIES) {
+        const r = results[c.key];
+        const count = r.hits.length;
+        const files = Object.keys(r.fileCount).length;
+        const chip = document.createElement('span');
+        chip.className = `health-chip ${c.tone} ${count > 0 ? 'has-hit' : 'pass'}`;
+        chip.textContent = `${count > 0 ? '✗' : '✓'} ${c.label}：${count}（${files} 文件）`;
+        healthChips.appendChild(chip);
+      }
+
+      for (const c of HEALTH_CATEGORIES) {
+        const r = results[c.key];
+        const card = document.createElement('details');
+        card.className = `health-card ${c.tone}`;
+        card.open = r.hits.length > 0;
+        const summary = document.createElement('summary');
+        summary.innerHTML = `<span class="card-title">${c.label}</span><span class="card-count">${r.hits.length} 处 · ${Object.keys(r.fileCount).length} 文件</span>`;
+        card.appendChild(summary);
+
+        const body = document.createElement('div');
+        body.className = 'card-body';
+        if (r.hits.length === 0) {
+          body.innerHTML = '<div class="empty-pass">✓ 无异常</div>';
+        } else if (c.key === 'digit')    renderDigit(body, r.hits, r.fileCount);
+        else if (c.key === 'longaxis') renderLongaxis(body, r.hits, r.fileCount);
+        else if (c.key === 'reverse')  renderReverse(body, r.hits, r.fileCount);
+        else if (c.key === 'overlap')  renderOverlap(body, r.hits, r.fileCount);
+        else if (c.key === 'empty')    renderEmpty(body, r.hits, r.fileCount);
+        else if (c.key === 'dup')      renderDup(body, r.hits, r.fileCount);
+        card.appendChild(body);
+        healthResult.appendChild(card);
+      }
+    }
+
+    function buildSummary(fileHitCount) {
       const summary = document.createElement('div');
       summary.className = 'scan-summary';
       const dist = Object.entries(fileHitCount)
         .sort((a, b) => b[1] - a[1])
         .map(([k, v]) => `${k.split('/').pop()} (${v})`)
         .join('  ');
-      summary.textContent = `命中分布：` + dist;
-      digitResult.appendChild(summary);
+      summary.textContent = '命中分布：' + (dist || '—');
+      return summary;
+    }
+    function moreRow(colspan, count) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td colspan="${colspan}" class="hit-more">…省略 ${count} 条</td>`;
+      return tr;
+    }
 
-      // 命中表
+    // 1. 阿拉伯数字
+    function renderDigit(container, hits, fileHitCount) {
+      container.appendChild(buildSummary(fileHitCount));
       const table = document.createElement('table');
       table.className = 'hit-table';
-      table.innerHTML = `
-        <thead><tr>
-          <th style="width:2.5rem">#</th>
-          <th>文件</th>
-          <th style="width:3rem">字幕#</th>
-          <th style="width:9rem">时间轴</th>
-          <th>数字</th>
-          <th>上下文</th>
-        </tr></thead>
-        <tbody></tbody>`;
+      table.innerHTML = `<thead><tr><th style="width:2.5rem">#</th><th>文件</th><th style="width:3rem">字幕#</th><th style="width:13rem">时间轴</th><th style="width:4rem">数字</th><th>上下文</th></tr></thead><tbody></tbody>`;
       const tbody = table.querySelector('tbody');
-
       const limit = 500;
       const showCount = Math.min(hits.length, limit);
       for (let i = 0; i < showCount; i++) {
         const h = hits[i];
         const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td>${i + 1}</td>
-          <td class="hit-fname" title="${escapeHtmlAttr(h.fileName)}">${escapeHtml(h.fileName.split('/').pop())}</td>
-          <td>${h.subIdx}</td>
-          <td>${formatTimecode(h.start)} → ${formatTimecode(h.end)}</td>
-          <td class="digit-value">${escapeHtml(h.digit)}</td>
-          <td class="hit-ctx">${highlightDigit(h.text, h.digitStart, h.digit.length)}</td>`;
+        tr.innerHTML = `<td>${i + 1}</td><td class="hit-fname" title="${escapeHtmlAttr(h.fileName)}">${escapeHtml(h.fileName.split('/').pop())}</td><td>${h.subIdx}</td><td>${formatTimecode(h.start)} → ${formatTimecode(h.end)}</td><td class="digit-value">${escapeHtml(h.digit)}</td><td class="hit-ctx">${highlightDigit(h.text, h.digitStart, h.digit.length)}</td>`;
         tbody.appendChild(tr);
       }
-      if (hits.length > limit) {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td colspan="6" class="hit-more">…省略 ${hits.length - limit} 条</td>`;
-        tbody.appendChild(tr);
-      }
-      digitResult.appendChild(table);
+      if (hits.length > limit) tbody.appendChild(moreRow(6, hits.length - limit));
+      container.appendChild(table);
     }
 
-    // ------- 超长时间轴识别（只读定位） -------
-    // 判定：字幕 A 的时间范围完整包含字幕 B（B.start >= A.start 且 B.end <= A.end），
-    // 且 A 比 B 长至少 100ms（排除时间范围完全相同的重复块，那属于另一类问题）。
-    const CONTAIN_MIN_GAP_MS = 100;
-    const btnScanLong = document.getElementById('btnScanLong');
-    const longPanel   = document.getElementById('longPanel');
-    const longResult  = document.getElementById('longResult');
-    const statusLong  = document.getElementById('statusLong');
-
-    btnScanLong.addEventListener('click', async () => {
-      if (!sourceType) {
-        alert('请先上传或拖入字幕（ZIP / 文件夹）');
-        return;
-      }
-      btnScanLong.disabled = true;
-      statusLong.className = 'status';
-      statusLong.textContent = '扫描中…';
-      longPanel.hidden = false;
-      longResult.hidden = true;
-
-      try {
-        const files = await loadFixSubtitleFiles();
-        const allHits = [];
-        const fileHitCount = {};
-
-        for (const f of files) {
-          const subs = parseSrt(f.content);
-          for (let i = 0; i < subs.length; i++) {
-            const a = subs[i];
-            const durA = a.end - a.start;
-            const contained = [];
-            for (let j = 0; j < subs.length; j++) {
-              if (j === i) continue;
-              const b = subs[j];
-              const durB = b.end - b.start;
-              if (b.start >= a.start && b.end <= a.end && durA - durB >= CONTAIN_MIN_GAP_MS) {
-                contained.push({
-                  subIdx: j + 1,
-                  start: b.start,
-                  end: b.end,
-                  text: flattenText(b.text),
-                });
-              }
-            }
-            if (contained.length > 0) {
-              allHits.push({
-                fileName: f.name,
-                subIdx: i + 1,
-                start: a.start,
-                end: a.end,
-                duration: durA,
-                text: flattenText(a.text),
-                contained,
-              });
-              fileHitCount[f.name] = (fileHitCount[f.name] || 0) + 1;
-            }
-          }
-        }
-
-        renderLongResult(allHits, fileHitCount);
-        statusLong.className = 'status ok';
-        statusLong.textContent = `扫描完成：共 ${allHits.length} 条超长时间轴，涉及 ${Object.keys(fileHitCount).length} 个文件`;
-      } catch (e) {
-        statusLong.className = 'status err';
-        statusLong.textContent = '扫描失败：' + e.message;
-      } finally {
-        btnScanLong.disabled = false;
-      }
-    });
-
-    function renderLongResult(hits, fileHitCount) {
-      longResult.hidden = false;
-      longResult.innerHTML = '';
-
-      // 文件分布摘要
-      const summary = document.createElement('div');
-      summary.className = 'scan-summary';
-      const dist = Object.entries(fileHitCount)
-        .sort((a, b) => b[1] - a[1])
-        .map(([k, v]) => `${k.split('/').pop()} (${v})`)
-        .join('  ');
-      summary.textContent = `命中分布：` + dist;
-      longResult.appendChild(summary);
-
-      // 命中表（每条命中后跟一行展开，列出被包含的字幕）
+    // 2. 超长时间轴
+    function renderLongaxis(container, hits, fileHitCount) {
+      container.appendChild(buildSummary(fileHitCount));
       const table = document.createElement('table');
       table.className = 'hit-table';
-      table.innerHTML = `
-        <thead><tr>
-          <th style="width:2.5rem">#</th>
-          <th>文件</th>
-          <th style="width:3rem">字幕#</th>
-          <th style="width:13rem">时间轴</th>
-          <th style="width:5.5rem">时长</th>
-          <th style="width:3.5rem">包含</th>
-          <th>本句内容</th>
-        </tr></thead>
-        <tbody></tbody>`;
+      table.innerHTML = `<thead><tr><th style="width:2.5rem">#</th><th>文件</th><th style="width:3rem">字幕#</th><th style="width:13rem">时间轴</th><th style="width:5.5rem">时长</th><th style="width:3.5rem">包含</th><th>本句内容</th></tr></thead><tbody></tbody>`;
       const tbody = table.querySelector('tbody');
-
       const limit = 500;
       const showCount = Math.min(hits.length, limit);
       for (let i = 0; i < showCount; i++) {
         const h = hits[i];
         const tr = document.createElement('tr');
         tr.className = 'long-row';
-        tr.innerHTML = `
-          <td>${i + 1}</td>
-          <td class="hit-fname" title="${escapeHtmlAttr(h.fileName)}">${escapeHtml(h.fileName.split('/').pop())}</td>
-          <td>${h.subIdx}</td>
-          <td>${formatTimecode(h.start)} → ${formatTimecode(h.end)}</td>
-          <td class="long-dur">${formatDuration(h.duration)}</td>
-          <td class="long-count">${h.contained.length}</td>
-          <td class="hit-ctx">${escapeHtml(h.text)}</td>`;
+        tr.innerHTML = `<td>${i + 1}</td><td class="hit-fname" title="${escapeHtmlAttr(h.fileName)}">${escapeHtml(h.fileName.split('/').pop())}</td><td>${h.subIdx}</td><td>${formatTimecode(h.start)} → ${formatTimecode(h.end)}</td><td class="long-dur">${formatDuration(h.duration)}</td><td class="long-count">${h.contained.length}</td><td class="hit-ctx">${escapeHtml(h.text)}</td>`;
         tbody.appendChild(tr);
-
-        // 展开行：被该字幕包含的字幕列表
         const detailTr = document.createElement('tr');
         detailTr.className = 'long-contained-row';
-        const items = h.contained.map(c =>
-          `<div class="long-contained-item">
-             <span class="long-contained-idx">#${c.subIdx}</span>
-             <span class="long-contained-tc">${formatTimecode(c.start)} → ${formatTimecode(c.end)}</span>
-             <span class="long-contained-text">${escapeHtml(truncate(c.text, 60))}</span>
-           </div>`).join('');
+        const items = h.contained.map(c => `<div class="long-contained-item"><span class="long-contained-idx">#${c.subIdx}</span><span class="long-contained-tc">${formatTimecode(c.start)} → ${formatTimecode(c.end)}</span><span class="long-contained-text">${escapeHtml(truncate(c.text, 60))}</span></div>`).join('');
         detailTr.innerHTML = `<td colspan="7"><div class="long-contained">被包含的字幕：${items}</div></td>`;
         tbody.appendChild(detailTr);
       }
-      if (hits.length > limit) {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td colspan="7" class="hit-more">…省略 ${hits.length - limit} 条</td>`;
-        tbody.appendChild(tr);
-      }
-      longResult.appendChild(table);
+      if (hits.length > limit) tbody.appendChild(moreRow(7, hits.length - limit));
+      container.appendChild(table);
     }
 
+    // 3. 时间轴倒退
+    function renderReverse(container, hits, fileHitCount) {
+      container.appendChild(buildSummary(fileHitCount));
+      const table = document.createElement('table');
+      table.className = 'hit-table';
+      table.innerHTML = `<thead><tr><th style="width:2.5rem">#</th><th>文件</th><th style="width:3rem">字幕#</th><th style="width:13rem">时间轴</th><th style="width:5.5rem">差值</th><th>本句内容</th></tr></thead><tbody></tbody>`;
+      const tbody = table.querySelector('tbody');
+      const limit = 500;
+      const showCount = Math.min(hits.length, limit);
+      for (let i = 0; i < showCount; i++) {
+        const h = hits[i];
+        const tr = document.createElement('tr');
+        tr.className = 'reverse-row';
+        tr.innerHTML = `<td>${i + 1}</td><td class="hit-fname" title="${escapeHtmlAttr(h.fileName)}">${escapeHtml(h.fileName.split('/').pop())}</td><td>${h.subIdx}</td><td>${formatTimecode(h.start)} → ${formatTimecode(h.end)}</td><td class="long-dur">${h.duration}ms</td><td class="hit-ctx">${escapeHtml(h.text)}</td>`;
+        tbody.appendChild(tr);
+      }
+      if (hits.length > limit) tbody.appendChild(moreRow(6, hits.length - limit));
+      container.appendChild(table);
+    }
+
+    // 4. 时间轴重叠
+    function renderOverlap(container, hits, fileHitCount) {
+      container.appendChild(buildSummary(fileHitCount));
+      const table = document.createElement('table');
+      table.className = 'hit-table';
+      table.innerHTML = `<thead><tr><th style="width:2.5rem">#</th><th>文件</th><th style="width:3.5rem">A#</th><th style="width:3.5rem">B#</th><th style="width:13rem">A 时间轴</th><th style="width:13rem">B 时间轴</th><th style="width:5rem">重叠</th><th>内容</th></tr></thead><tbody></tbody>`;
+      const tbody = table.querySelector('tbody');
+      const limit = 500;
+      const showCount = Math.min(hits.length, limit);
+      for (let i = 0; i < showCount; i++) {
+        const h = hits[i];
+        const tr = document.createElement('tr');
+        tr.className = 'overlap-row';
+        tr.innerHTML = `<td>${i + 1}</td><td class="hit-fname" title="${escapeHtmlAttr(h.fileName)}">${escapeHtml(h.fileName.split('/').pop())}</td><td>${h.subIdxA}</td><td>${h.subIdxB}</td><td>${formatTimecode(h.startA)} → ${formatTimecode(h.endA)}</td><td>${formatTimecode(h.startB)} → ${formatTimecode(h.endB)}</td><td class="long-dur">${formatDuration(h.overlapMs)}</td><td class="hit-ctx">${escapeHtml(truncate(h.textA, 40))} → ${escapeHtml(truncate(h.textB, 40))}</td>`;
+        tbody.appendChild(tr);
+      }
+      if (hits.length > limit) tbody.appendChild(moreRow(8, hits.length - limit));
+      container.appendChild(table);
+    }
+
+    // 5. 空文本
+    function renderEmpty(container, hits, fileHitCount) {
+      container.appendChild(buildSummary(fileHitCount));
+      const table = document.createElement('table');
+      table.className = 'hit-table';
+      table.innerHTML = `<thead><tr><th style="width:2.5rem">#</th><th>文件</th><th style="width:3rem">字幕#</th><th style="width:13rem">时间轴</th><th style="width:5.5rem">时长</th></tr></thead><tbody></tbody>`;
+      const tbody = table.querySelector('tbody');
+      const limit = 500;
+      const showCount = Math.min(hits.length, limit);
+      for (let i = 0; i < showCount; i++) {
+        const h = hits[i];
+        const tr = document.createElement('tr');
+        tr.className = 'empty-row';
+        tr.innerHTML = `<td>${i + 1}</td><td class="hit-fname" title="${escapeHtmlAttr(h.fileName)}">${escapeHtml(h.fileName.split('/').pop())}</td><td>${h.subIdx}</td><td>${formatTimecode(h.start)} → ${formatTimecode(h.end)}</td><td class="long-dur">${formatDuration(h.end - h.start)}</td>`;
+        tbody.appendChild(tr);
+      }
+      if (hits.length > limit) tbody.appendChild(moreRow(5, hits.length - limit));
+      container.appendChild(table);
+    }
+
+    // 6. 重复块
+    function renderDup(container, hits, fileHitCount) {
+      container.appendChild(buildSummary(fileHitCount));
+      const table = document.createElement('table');
+      table.className = 'hit-table';
+      table.innerHTML = `<thead><tr><th style="width:2.5rem">#</th><th>文件</th><th style="width:5rem">重复数</th><th style="width:13rem">时间轴</th><th>字幕#</th><th>内容</th></tr></thead><tbody></tbody>`;
+      const tbody = table.querySelector('tbody');
+      const limit = 500;
+      const showCount = Math.min(hits.length, limit);
+      for (let i = 0; i < showCount; i++) {
+        const h = hits[i];
+        const tr = document.createElement('tr');
+        tr.className = 'dup-row';
+        tr.innerHTML = `<td>${i + 1}</td><td class="hit-fname" title="${escapeHtmlAttr(h.fileName)}">${escapeHtml(h.fileName.split('/').pop())}</td><td class="long-count">${h.count}</td><td>${formatTimecode(h.start)} → ${formatTimecode(h.end)}</td><td>${h.subIdxs.join(', ')}</td><td class="hit-ctx">${escapeHtml(truncate(h.text, 60))}</td>`;
+        tbody.appendChild(tr);
+      }
+      if (hits.length > limit) tbody.appendChild(moreRow(6, hits.length - limit));
+      container.appendChild(table);
+    }
+
+    // ------- 工具函数（供健康检查 render 复用） -------
     function flattenText(text) {
       return String(text || '').replace(/\r\n/g, '\n').replace(/\n/g, ' ').trim();
     }
