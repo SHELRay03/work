@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="style.css?v=8" />
+  <link rel="stylesheet" href="style.css?v=11" />
 </head>
 <body>
   <div class="bg-layer" aria-hidden="true"></div>
@@ -33,57 +33,50 @@
 
   <main class="hud-main">
     <h1 class="page-title">目录平铺</h1>
-    <p class="page-sub">将嵌套子文件夹中的文件全部平铺到根目录，自动跳过同名冲突并清理空目录</p>
+    <p class="page-sub">将嵌套子文件夹中的文件全部平铺到根目录，自动跳过同名冲突并清理空目录。支持多个根目录累积，分别独立平铺。</p>
 
     <section class="panel">
-      <div class="panel-head"><span class="panel-dot"></span><h2>1. 选择根目录</h2></div>
-      <p class="panel-sub">选择包含嵌套子文件夹的根目录。所有子目录里的文件将被移动到根目录，根目录已有的文件保持不动。</p>
+      <div class="panel-head"><span class="panel-dot"></span><h2>1. 选择根目录（可多个）</h2></div>
+      <p class="panel-sub">点击「添加文件夹」逐个累积，或直接拖入多个文件夹一次性加入。每个根目录独立扫描、独立预览、独立执行。</p>
       <div class="drop-zone" id="pickDrop">
         <div class="dz-inner">
           <div class="dz-icon">📁</div>
-          <div id="pickText">点击选择根目录，或直接拖入文件夹</div>
+          <div id="pickText">点击添加文件夹，或直接拖入一个或多个文件夹</div>
           <div class="dz-hint">仅支持 Chrome/Edge；操作将修改原目录，请确保已备份</div>
         </div>
       </div>
-      <div class="status" id="statusPick"></div>
-    </section>
-
-    <section class="panel" id="previewPanel" hidden>
-      <div class="panel-head"><span class="panel-dot"></span><h2>2. 平铺预览</h2></div>
-      <p class="panel-sub">同名冲突的文件将跳过（保留根目录已有的或先到达的）。确认无误后执行。</p>
-      <div id="previewSummary" class="scan-summary"></div>
       <div class="actions">
-        <button type="button" id="btnExec" class="btn-primary">执行平铺</button>
-        <button type="button" id="btnReScan" class="btn-ghost">重新选择目录</button>
+        <button type="button" id="btnAdd" class="btn-ghost">添加文件夹</button>
+        <button type="button" id="btnClear" class="btn-ghost" hidden>清空列表</button>
+        <button type="button" id="btnExecAll" class="btn-primary" hidden>全部执行</button>
       </div>
-      <div id="previewDetail"></div>
+      <div class="status" id="statusPick"></div>
+      <div id="rootList"></div>
     </section>
 
     <section class="panel" id="reportPanel" hidden>
-      <div class="panel-head"><span class="panel-dot"></span><h2>3. 执行报告</h2></div>
+      <div class="panel-head"><span class="panel-dot"></span><h2>2. 执行报告</h2></div>
       <div id="reportContent"></div>
     </section>
   </main>
 
 <script>
 // =============================================================
-// 目录平铺 — 独立页面
+// 目录平铺 — 独立页面（多根目录版）
 // 使用 File System Access API 原地移动文件，仅 Chrome/Edge
 // =============================================================
 
 const state = {
-  rootHandle: null,    // 根目录 FileSystemDirectoryHandle
-  plan: null,          // 扫描结果
+  roots: [],          // [{ handle, plan, status: 'pending'|'done'|'error', error }]
 };
 
 const pickDrop      = document.getElementById('pickDrop');
 const pickText      = document.getElementById('pickText');
 const statusPick    = document.getElementById('statusPick');
-const previewPanel  = document.getElementById('previewPanel');
-const previewSummary = document.getElementById('previewSummary');
-const previewDetail = document.getElementById('previewDetail');
-const btnExec       = document.getElementById('btnExec');
-const btnReScan     = document.getElementById('btnReScan');
+const rootList      = document.getElementById('rootList');
+const btnAdd        = document.getElementById('btnAdd');
+const btnClear      = document.getElementById('btnClear');
+const btnExecAll    = document.getElementById('btnExecAll');
 const reportPanel   = document.getElementById('reportPanel');
 const reportContent = document.getElementById('reportContent');
 
@@ -96,42 +89,48 @@ if (!window.showDirectoryPicker) {
   statusPick.textContent = '请使用 Chrome/Edge 浏览器，需要 File System Access API 支持。';
 }
 
-// ------- 使用某个根目录 handle（点击/拖拽共用） -------
+// ------- 使用某个根目录 handle（点击/拖拽共用，累积到 state.roots） -------
 async function useRootHandle(handle) {
   if (!handle || handle.kind !== 'directory') {
     statusPick.className = 'status err';
     statusPick.textContent = '请提供文件夹（而非单个文件）';
     return;
   }
+  // 去重：同一 handle 不重复加入
+  if (state.roots.some(r => r.handle === handle)) {
+    statusPick.className = 'status';
+    statusPick.textContent = `「${handle.name}」已在列表中，已跳过`;
+    return;
+  }
   // 请求读写权限
   const perm = await handle.requestPermission?.({ mode: 'readwrite' });
   if (perm && perm !== 'granted') {
     statusPick.className = 'status err';
-    statusPick.textContent = '未授权读写权限，无法平铺';
+    statusPick.textContent = `未授权「${handle.name}」读写权限，已跳过`;
     return;
   }
-  state.rootHandle = handle;
-  pickText.innerHTML = `已选择：<b>${escapeHtml(handle.name)}</b>`;
+  const root = { handle, plan: null, status: 'pending', error: null };
+  state.roots.push(root);
+  renderRootList();
   statusPick.className = 'status';
-  statusPick.textContent = '扫描中…';
-  previewPanel.hidden = true;
-  reportPanel.hidden = true;
+  statusPick.textContent = `已加入「${handle.name}」，扫描中…`;
   try {
     const plan = await scanAndPreview(handle);
-    state.plan = plan;
-    renderPreview(plan);
+    root.plan = plan;
+    renderRootList();
     statusPick.className = 'status ok';
-    statusPick.textContent = `扫描完成：根目录「${handle.name}」`;
+    statusPick.textContent = `「${handle.name}」扫描完成`;
   } catch (e) {
-    state.rootHandle = null;
-    state.plan = null;
+    root.status = 'error';
+    root.error = e.message;
+    renderRootList();
     statusPick.className = 'status err';
-    statusPick.textContent = '扫描失败：' + e.message;
+    statusPick.textContent = `「${handle.name}」扫描失败：${e.message}`;
   }
 }
 
-// ------- 点击选择根目录 -------
-pickDrop.addEventListener('click', async () => {
+// ------- 点击「添加文件夹」 -------
+btnAdd.addEventListener('click', async () => {
   if (!window.showDirectoryPicker) return;
   try {
     const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
@@ -147,7 +146,7 @@ pickDrop.addEventListener('click', async () => {
   }
 });
 
-// ------- 拖拽选择根目录 -------
+// ------- 拖拽（支持多个文件夹一次性加入） -------
 ['dragenter', 'dragover'].forEach(evt => {
   pickDrop.addEventListener(evt, (e) => {
     e.preventDefault();
@@ -165,32 +164,39 @@ pickDrop.addEventListener('click', async () => {
 pickDrop.addEventListener('drop', async (e) => {
   if (!window.showDirectoryPicker) return;
   const items = e.dataTransfer?.items;
-  if (!items) return;
+  if (!items || items.length === 0) return;
   try {
-    // 优先使用 getAsFileSystemHandle（File System Access API，可拿到 DirectoryHandle 用于原地操作）
-    let dirHandle = null;
+    const dirHandles = [];
+    // 先收集所有 directory handle
     for (const item of items) {
-      const getHandle = item.getAsFileSystemHandle
-        ? item.getAsFileSystemHandle()
-        : null;
+      const getHandle = item.getAsFileSystemHandle ? item.getAsFileSystemHandle() : null;
       if (!getHandle) continue;
       const handle = await getHandle;
-      if (handle && handle.kind === 'directory') {
-        dirHandle = handle;
-        break;
-      }
+      if (handle && handle.kind === 'directory') dirHandles.push(handle);
     }
-    if (dirHandle) {
-      await useRootHandle(dirHandle);
+    if (dirHandles.length === 0) {
+      statusPick.className = 'status err';
+      statusPick.textContent = '请拖入文件夹，而非单个文件';
       return;
     }
-    // 兜底：拖入的是普通文件
-    statusPick.className = 'status err';
-    statusPick.textContent = '请拖入文件夹，而非单个文件';
+    statusPick.className = 'status';
+    statusPick.textContent = `正在加入 ${dirHandles.length} 个根目录…`;
+    for (const h of dirHandles) await useRootHandle(h);
   } catch (err) {
     statusPick.className = 'status err';
     statusPick.textContent = '拖入目录失败：' + (err.message || err.name);
   }
+});
+
+// ------- 清空列表 -------
+btnClear.addEventListener('click', () => {
+  state.roots = [];
+  renderRootList();
+  reportPanel.hidden = true;
+  btnClear.hidden = true;
+  btnExecAll.hidden = true;
+  statusPick.className = 'status';
+  statusPick.textContent = '已清空列表';
 });
 
 // ------- 递归扫描 -------
@@ -215,7 +221,7 @@ async function scanAndPreview(rootHandle) {
   }
   await walk(rootHandle, null, '', 0);
 
-  // 同名冲突检测：根已有名 + toMove 互相同名（保留先到达的）
+  // 同名冲突检测
   const usedNames = new Set(rootFiles);
   const conflicts = [];
   const uniqueToMove = [];
@@ -231,53 +237,117 @@ async function scanAndPreview(rootHandle) {
   return { rootName: rootHandle.name, rootFiles, toMove: uniqueToMove, conflicts, allDirs };
 }
 
-// ------- 渲染预览 -------
-function renderPreview(plan) {
-  previewPanel.hidden = false;
-  previewSummary.textContent = `根目录「${plan.rootName}」：已有 ${plan.rootFiles.length} 个文件（不动），将移动 ${plan.toMove.length} 个，同名冲突跳过 ${plan.conflicts.length} 个，将尝试删除 ${plan.allDirs.length} 个中间空目录。`;
+// ------- 渲染根目录列表（每个一个卡片） -------
+function renderRootList() {
+  if (state.roots.length === 0) {
+    rootList.innerHTML = '';
+    btnClear.hidden = true;
+    btnExecAll.hidden = true;
+    return;
+  }
+  btnClear.hidden = false;
+  const hasPending = state.roots.some(r => r.status === 'pending' && r.plan);
+  btnExecAll.hidden = !hasPending;
 
-  let html = '';
+  rootList.innerHTML = state.roots.map((r, i) => {
+    const plan = r.plan;
+    const summary = plan
+      ? `已有 ${plan.rootFiles.length} · 移动 ${plan.toMove.length} · 冲突跳过 ${plan.conflicts.length} · 删空 ${plan.allDirs.length}`
+      : (r.status === 'error' ? `错误：${escapeHtml(r.error || '')}` : '扫描中…');
+    const cls = r.status === 'done' ? 'root-card done'
+      : r.status === 'error' ? 'root-card err'
+      : 'root-card';
+    const actionBtn = plan
+      ? `<button type="button" class="btn-ghost root-exec" data-idx="${i}">执行</button>
+         <button type="button" class="btn-ghost root-remove" data-idx="${i}">移除</button>`
+      : '';
+    return `<div class="${cls}">
+      <div class="root-head">
+        <span class="root-name">📁 ${escapeHtml(r.handle.name)}</span>
+        <span class="root-summary">${summary}</span>
+        <span class="root-actions">${actionBtn}</span>
+      </div>
+      ${plan ? renderPlanPreview(plan, i) : ''}
+    </div>`;
+  }).join('');
+
+  // 绑定按钮
+  rootList.querySelectorAll('.root-exec').forEach(btn => {
+    btn.onclick = () => executeOne(Number(btn.dataset.idx));
+  });
+  rootList.querySelectorAll('.root-remove').forEach(btn => {
+    btn.onclick = () => {
+      const idx = Number(btn.dataset.idx);
+      state.roots.splice(idx, 1);
+      renderRootList();
+      if (state.roots.length === 0) {
+        reportPanel.hidden = true;
+        statusPick.className = 'status';
+        statusPick.textContent = '已清空列表';
+      }
+    };
+  });
+}
+
+function renderPlanPreview(plan, idx) {
+  let html = `<div class="root-preview">`;
   html += section('将移动（' + plan.toMove.length + '）', plan.toMove.map(f =>
     `<div class="file-item"><span class="file-name">${escapeHtml(f.name)}</span><span class="file-from">← ${escapeHtml(f.fromPath)}</span></div>`).join(''));
-
   if (plan.conflicts.length > 0) {
     html += section('同名冲突跳过（' + plan.conflicts.length + '）', plan.conflicts.map(c =>
       `<div class="file-item skip"><span class="file-name">${escapeHtml(c.name)}</span><span class="file-from">← ${escapeHtml(c.fromPath)}</span></div>`).join(''), 'warn');
   }
-
   if (plan.allDirs.length > 0) {
     const dirsByDepth = [...plan.allDirs].sort((a, b) => a.depth - b.depth);
     html += section('中间目录将尝试删除（' + plan.allDirs.length + '）', dirsByDepth.map(d =>
       `<div class="file-item dir"><span class="file-name">📁 ${escapeHtml(d.name)}</span><span class="file-from">${escapeHtml(d.path || '/')}</span></div>`).join(''));
   }
-
-  previewDetail.innerHTML = html;
+  html += '</div>';
+  return html;
 }
 
 function section(title, body, modifier) {
   return `<div class="preview-section${modifier ? ' ' + modifier : ''}">
-    <h3>${title}</h3>
+    <h4>${title}</h4>
     <div class="file-list">${body || '<div class="file-empty">无</div>'}</div>
   </div>`;
 }
 
-// ------- 执行平铺 -------
-btnExec.addEventListener('click', async () => {
-  if (!state.rootHandle || !state.plan) return;
-  btnExec.disabled = true;
-  btnReScan.disabled = true;
+// ------- 执行单个根目录平铺 -------
+async function executeOne(idx) {
+  const root = state.roots[idx];
+  if (!root || !root.plan) return;
+  if (root.status === 'done') return;
+  // 禁用该卡片按钮
+  const card = rootList.children[idx];
+  if (card) card.querySelectorAll('button').forEach(b => b.disabled = true);
   reportPanel.hidden = false;
-  reportContent.innerHTML = '<div class="status">执行中…</div>';
-
+  appendReportHeader(root);
   try {
-    const result = await executeFlatten(state.rootHandle, state.plan);
-    renderReport(state.plan, result);
+    const result = await executeFlatten(root.handle, root.plan);
+    root.status = 'done';
+    appendReportCard(root, result);
   } catch (e) {
-    reportContent.innerHTML = `<div class="status err">执行失败：${escapeHtml(e.message)}</div>`;
+    root.status = 'error';
+    root.error = e.message;
+    appendReportCard(root, null, e.message);
   } finally {
-    btnExec.disabled = false;
-    btnReScan.disabled = false;
+    renderRootList();
   }
+}
+
+// ------- 全部执行 -------
+btnExecAll.addEventListener('click', async () => {
+  btnExecAll.disabled = true;
+  btnClear.disabled = true;
+  reportPanel.hidden = false;
+  for (let i = 0; i < state.roots.length; i++) {
+    if (state.roots[i].status === 'done') continue;
+    if (!state.roots[i].plan) continue;
+    await executeOne(i);
+  }
+  btnExecAll.disabled = false;
+  btnClear.disabled = false;
 });
 
 async function executeFlatten(rootHandle, plan) {
@@ -306,7 +376,7 @@ async function executeFlatten(rootHandle, plan) {
     }
   }
 
-  // 删空中间目录（深→浅，空的能删掉，非空的 try/catch 保留）
+  // 删空中间目录（深→浅）
   const dirsByDepth = [...plan.allDirs].sort((a, b) => b.depth - a.depth);
   const removedDirs = [];
   const keptDirs = [];
@@ -322,41 +392,96 @@ async function executeFlatten(rootHandle, plan) {
   return { moved, skipped, removedDirs, keptDirs };
 }
 
-// ------- 渲染报告 -------
-function renderReport(plan, result) {
-  let html = `<div class="report-summary">根目录「${escapeHtml(plan.rootName)}」平铺完成：移动 ${result.moved.length} 个，跳过 ${result.skipped.length} 个，删除空目录 ${result.removedDirs.length} 个，保留非空目录 ${result.keptDirs.length} 个。</div>`;
-
-  if (result.moved.length > 0) {
-    html += section('已移动（' + result.moved.length + '）', result.moved.map(m =>
-      `<div class="file-item ok"><span class="file-name">${escapeHtml(m.name)}</span><span class="file-from">← ${escapeHtml(m.fromPath)}</span></div>`).join(''));
+// ------- 报告渲染 -------
+function appendReportHeader(root) {
+  if (!reportContent.querySelector('.report-header')) {
+    reportContent.innerHTML = '<div class="report-header">逐个根目录执行中…</div>';
   }
-  if (result.skipped.length > 0) {
-    html += section('已跳过（' + result.skipped.length + '）', result.skipped.map(s =>
-      `<div class="file-item skip"><span class="file-name">${escapeHtml(s.name)}</span><span class="file-from">← ${escapeHtml(s.fromPath)}</span>${s.error ? `<span class="file-err">${escapeHtml(s.error)}</span>` : ''}</div>`).join(''), 'warn');
-  }
-  if (result.keptDirs.length > 0) {
-    html += section('保留非空目录（' + result.keptDirs.length + '）', result.keptDirs.map(p =>
-      `<div class="file-item dir"><span class="file-name">📁 ${escapeHtml(p.split('/').pop() || '/')}</span><span class="file-from">${escapeHtml(p || '/')}</span></div>`).join(''));
-  }
-
-  reportContent.innerHTML = html;
 }
 
-// ------- 重新选择 -------
-btnReScan.addEventListener('click', () => {
-  state.rootHandle = null;
-  state.plan = null;
-  previewPanel.hidden = true;
-  reportPanel.hidden = true;
-  pickText.textContent = '点击选择根目录，或直接拖入文件夹';
-  statusPick.className = 'status';
-  statusPick.textContent = '';
-});
+function appendReportCard(root, result, errMsg) {
+  const card = document.createElement('div');
+  card.className = 'report-card';
+  if (result) {
+    let html = `<div class="report-summary">📁 ${escapeHtml(root.handle.name)} 平铺完成：移动 ${result.moved.length} 个，跳过 ${result.skipped.length} 个，删除空目录 ${result.removedDirs.length} 个，保留非空目录 ${result.keptDirs.length} 个。</div>`;
+    if (result.moved.length > 0) {
+      html += section('已移动（' + result.moved.length + '）', result.moved.map(m =>
+        `<div class="file-item ok"><span class="file-name">${escapeHtml(m.name)}</span><span class="file-from">← ${escapeHtml(m.fromPath)}</span></div>`).join(''));
+    }
+    if (result.skipped.length > 0) {
+      html += section('已跳过（' + result.skipped.length + '）', result.skipped.map(s =>
+        `<div class="file-item skip"><span class="file-name">${escapeHtml(s.name)}</span><span class="file-from">← ${escapeHtml(s.fromPath)}</span>${s.error ? `<span class="file-err">${escapeHtml(s.error)}</span>` : ''}</div>`).join(''), 'warn');
+    }
+    if (result.keptDirs.length > 0) {
+      html += section('保留非空目录（' + result.keptDirs.length + '）', result.keptDirs.map(p =>
+        `<div class="file-item dir"><span class="file-name">📁 ${escapeHtml(p.split('/').pop() || '/')}</span><span class="file-from">${escapeHtml(p || '/')}</span></div>`).join(''));
+    }
+    card.innerHTML = html;
+  } else {
+    card.className = 'report-card err';
+    card.innerHTML = `<div class="report-summary">📁 ${escapeHtml(root.handle.name)} 执行失败：${escapeHtml(errMsg || '未知错误')}</div>`;
+  }
+  reportContent.appendChild(card);
+}
 
 // ------- 工具函数 -------
 function escapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 </script>
+<style>
+/* 多根目录卡片 */
+.root-card {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--mint-deep);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.85rem;
+  margin: 0.5rem 0;
+  background: var(--bg-panel);
+}
+.root-card.done { border-left-color: #5a9e72; background: #eaf6ee; }
+.root-card.err  { border-left-color: #d06060; background: #fdecec; }
+.root-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.4rem;
+}
+.root-name { font-weight: 600; color: var(--text); flex: 0 0 auto; }
+.root-summary { font-size: 0.78rem; color: var(--text-muted); flex: 1 1 auto; }
+.root-actions { display: flex; gap: 0.35rem; flex: 0 0 auto; }
+.root-actions .btn-ghost { padding: 0.2rem 0.6rem; font-size: 0.74rem; }
+.root-preview {
+  border-top: 1px dashed var(--line);
+  padding-top: 0.4rem;
+}
+.root-preview .preview-section { margin: 0.3rem 0; }
+.root-preview h4 {
+  font-size: 0.78rem;
+  margin: 0.2rem 0 0.4rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.root-preview .file-list {
+  max-height: 12rem;
+  overflow-y: auto;
+}
+/* 报告卡片 */
+.report-card {
+  border: 1px solid var(--line);
+  border-left: 4px solid #5a9e72;
+  border-radius: var(--radius);
+  padding: 0.6rem 0.85rem;
+  margin: 0.5rem 0;
+  background: var(--bg-panel);
+}
+.report-card.err { border-left-color: #d06060; background: #fdecec; }
+.report-header {
+  font-weight: 600;
+  margin-bottom: 0.4rem;
+  color: var(--text);
+}
+</style>
 </body>
 </html>
