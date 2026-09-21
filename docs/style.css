@@ -1449,6 +1449,13 @@ button.btn-secondary:hover:not(:disabled) {
   font-style: italic;
 }
 
+.output-export-btn {
+  padding: 0.22rem 0.7rem;
+  font-size: 0.76rem;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
 .btn-all-replace {
   width: 100%;
   padding: 0.55rem 1rem;

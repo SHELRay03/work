@@ -691,15 +691,18 @@ async function extractSrtFromDropEvent(event) {
  * 使用 File System Access API 将文件写入文件夹
  * 返回 { success, message }
  */
-async function saveFilesToFolder(fileMap) {
+async function saveFilesToFolder(fileMap, dirHandle = null) {
   // fileMap: [{ path, content }]
+  // dirHandle: 已选择的目录句柄；传入时跳过目录选择器（用于每个术语表单独导出）
   if (!window.showDirectoryPicker) {
     return { success: false, message: '当前浏览器不支持文件夹导出，请使用 Chrome/Edge 或选择 ZIP 导出' };
   }
-  
+
   try {
-    const dirHandle = await window.showDirectoryPicker();
-    
+    if (!dirHandle) {
+      dirHandle = await window.showDirectoryPicker();
+    }
+
     for (const { path, content } of fileMap) {
       const parts = path.split('/');
       let current = dirHandle;
