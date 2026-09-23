@@ -334,12 +334,31 @@
         const results = runHealthChecks(parsed, parsedB);
         const hasB = !!parsedB;
         renderHealthResult(results, hasB);
-        const totalHits = Object.values(results).reduce((s, r) => s + r.hits.length, 0);
+        const totalHits = Object.values(results).reduce((s, r) => s + (r.hits ? r.hits.length : 0), 0);
         const filesWithHits = new Set();
-        for (const r of Object.values(results)) for (const fn of Object.keys(r.fileCount)) filesWithHits.add(fn);
-        const compareHint = hasB ? '，含 A↔B 时间轴对比' : '';
-        statusHealth.className = 'status ok';
-        statusHealth.textContent = `扫描完成：共 ${totalHits} 处异常，涉及 ${filesWithHits.size} 个文件（共 ${parsed.length} 个文件${compareHint}）`;
+        for (const r of Object.values(results)) {
+          if (!r.fileCount) continue;
+          for (const fn of Object.keys(r.fileCount)) filesWithHits.add(fn);
+        }
+        let pairHint = '';
+        let pairErr = false;
+        if (hasB && results._pairStats) {
+          const ps = results._pairStats;
+          const modeLabel = { seq: '序号', pos: '位置', none: '无法' }[ps.mode] || ps.mode;
+          if (ps.mode === 'none') {
+            pairErr = true;
+            pairHint = `，A↔B 无法可靠配对（文件名差异过大），请检查文件名是否都含序号数字`;
+          } else if (ps.aOnly.length === 0 && ps.bOnly.length === 0) {
+            pairHint = `，A↔B 按${modeLabel}配对全部成功（${ps.paired} 个文件）`;
+          } else {
+            pairErr = true;
+            const aSample = ps.aOnly.slice(0, 3).map(n => n.split('/').pop()).join('、');
+            const bSample = ps.bOnly.slice(0, 3).map(n => n.split('/').pop()).join('、');
+            pairHint = `，A↔B 按${modeLabel}配对：成功 ${ps.paired}，A 无对应 B ${ps.aOnly.length}${aSample ? '（如 ' + aSample + '）' : ''}，B 无对应 A ${ps.bOnly.length}${bSample ? '（如 ' + bSample + '）' : ''}`;
+          }
+        }
+        statusHealth.className = pairErr ? 'status err' : 'status ok';
+        statusHealth.textContent = `扫描完成：共 ${totalHits} 处异常，涉及 ${filesWithHits.size} 个文件（共 ${parsed.length} 个文件）${pairHint}`;
       } catch (e) {
         statusHealth.className = 'status err';
         statusHealth.textContent = '扫描失败：' + e.message;
@@ -461,63 +480,104 @@
     }
 
     // ------- A↔B 时间轴对比 -------
-    // 规则：
-    //   - 按文件名配对（取 basename，忽略路径差异）
-    //   - 容差 TIMELINE_TOLERANCE_MS（50ms）
-    //   - B 中某条 b：若 A 中存在 a 满足 a.start ≤ b.start+容差 且 a.end ≥ b.end-容差 → 已覆盖（含合并）
-    //     否则 → missing（A 缺失）
-    //   - A 中某条 a：若 B 中存在 b 一对一匹配（容差内 start/end 相等）→ 正常
-    //     否则若 a 覆盖了 B 中至少 1 条字幕（a.start ≤ b.start+容差 且 a.end ≥ b.end-容差）→ 合并，正常
-    //     否则 → extra（A 多余）
+    // 配对策略（解决两边文件名后缀不同的问题）：
+    //   1) 优先按序号键配对：从文件名中提取末尾数字串作为序号（去掉数字后的多余内容），
+    //      双方序号集合一致率高 → 用序号配对；
+    //   2) 否则按排序位置配对（双方已按自然排序，序号相同率 ≥80% 才用）；
+    //   3) 都不可靠 → pairingMode='none'，记为无法配对。
+    //   容差 TIMELINE_TOLERANCE_MS（50ms），仅对比时间轴。
+    //   B 中某条 b：A 存在 a 满足 a.start ≤ b.start+容差 且 a.end ≥ b.end-容差 → 已覆盖（含合并），否则 missing
+    //   A 中某条 a：B 存在 b 一对一匹配（容差内 start/end 相等）或覆盖 B 中至少 1 条 → 正常，否则 extra
     function runTimelineCompare(parsedA, parsedB, results) {
       const TOL = TIMELINE_TOLERANCE_MS;
-      // B 按文件名建立索引（basename）
-      const bMap = new Map();
-      for (const p of parsedB) bMap.set(basenameOf(p.name), p);
+
+      const aKeys = parsedA.map(p => extractSeqKey(p.name));
+      const bKeys = parsedB.map(p => extractSeqKey(p.name));
+      const aHasSeq = aKeys.some(k => k !== null);
+      const bHasSeq = bKeys.some(k => k !== null);
+      let pairingMode = 'none';
+      const pairMap = new Map(); // aIdx -> bIdx
+
+      if (aHasSeq && bHasSeq) {
+        const bByKey = new Map();
+        for (let j = 0; j < parsedB.length; j++) {
+          const k = bKeys[j];
+          if (k !== null && !bByKey.has(k)) bByKey.set(k, j);
+        }
+        let matched = 0;
+        for (let i = 0; i < parsedA.length; i++) {
+          const k = aKeys[i];
+          if (k !== null && bByKey.has(k)) { pairMap.set(i, bByKey.get(k)); matched++; }
+        }
+        // 序号配对命中率 ≥80% 才采用，否则试位置配对
+        if (matched >= Math.max(1, Math.ceil(parsedA.length * 0.8))) {
+          pairingMode = 'seq';
+        } else {
+          pairMap.clear();
+        }
+      }
+
+      if (pairingMode === 'none') {
+        const len = Math.min(parsedA.length, parsedB.length);
+        let posMatched = 0;
+        for (let i = 0; i < len; i++) {
+          const k1 = aKeys[i], k2 = bKeys[i];
+          if (k1 !== null && k2 !== null && k1 === k2) posMatched++;
+        }
+        // 双方序号一致率 ≥80% ，或双方都无序号但数量相同 → 用位置配对
+        if (len > 0 && (posMatched >= Math.max(1, Math.ceil(len * 0.8)) || (!aHasSeq && !bHasSeq && parsedA.length === parsedB.length))) {
+          pairingMode = 'pos';
+          for (let i = 0; i < len; i++) pairMap.set(i, i);
+        }
+      }
 
       const bumpMissing = (fn) => { results.missing.fileCount[fn] = (results.missing.fileCount[fn] || 0) + 1; };
       const bumpExtra   = (fn) => { results.extra.fileCount[fn]   = (results.extra.fileCount[fn]   || 0) + 1; };
 
-      for (const pa of parsedA) {
-        const aName = pa.name;
-        const aBase = basenameOf(aName);
-        const pb = bMap.get(aBase);
-        if (!pb) {
-          // A 中存在但 B 中无对应文件 → A 整文件多余，逐条记为 extra
-          for (let i = 0; i < pa.subs.length; i++) {
-            const a = pa.subs[i];
+      const pairStats = { paired: 0, aOnly: [], bOnly: [], mode: pairingMode };
+      const bPairedIdx = new Set();
+
+      for (let i = 0; i < parsedA.length; i++) {
+        const aName = parsedA[i].name;
+        if (!pairMap.has(i)) {
+          pairStats.aOnly.push(aName);
+          for (let k = 0; k < parsedA[i].subs.length; k++) {
+            const a = parsedA[i].subs[k];
             results.extra.hits.push({
-              fileName: aName, subIdx: i + 1, start: a.start, end: a.end,
-              text: flattenText(a.text), reason: 'B 中无对应文件',
+              fileName: aName, subIdx: k + 1, start: a.start, end: a.end,
+              text: flattenText(a.text), reason: pairingMode === 'none' ? '无法配对文件（文件名差异过大）' : 'B 中无对应文件',
             });
             bumpExtra(aName);
           }
           continue;
         }
+        const j = pairMap.get(i);
+        bPairedIdx.add(j);
+        pairStats.paired++;
+        const pa = parsedA[i], pb = parsedB[j];
         const aSubs = pa.subs, bSubs = pb.subs;
 
-        // B 中无对应 A 的文件已在下面处理（遍历 B 时记录 missing）
-        // 1. 检查 B 中每条是否被 A 覆盖（含合并）→ 未覆盖即 missing
-        for (let j = 0; j < bSubs.length; j++) {
-          const b = bSubs[j];
+        // 1. B 中每条是否被 A 覆盖（含合并）→ 未覆盖即 missing
+        for (let jj = 0; jj < bSubs.length; jj++) {
+          const b = bSubs[jj];
           const covered = aSubs.some(a => a.start <= b.start + TOL && a.end >= b.end - TOL);
           if (!covered) {
             results.missing.hits.push({
-              fileName: aName, bSubIdx: j + 1, bFileName: pb.name,
+              fileName: aName, bSubIdx: jj + 1, bFileName: pb.name,
               start: b.start, end: b.end, text: flattenText(b.text),
             });
             bumpMissing(aName);
           }
         }
 
-        // 2. 检查 A 中每条是否在 B 中有对应（一对一 或 合并）→ 否则 extra
-        for (let i = 0; i < aSubs.length; i++) {
-          const a = aSubs[i];
+        // 2. A 中每条是否在 B 中有对应（一对一 或 合并）→ 否则 extra
+        for (let ii = 0; ii < aSubs.length; ii++) {
+          const a = aSubs[ii];
           const oneToOne = bSubs.some(b => Math.abs(a.start - b.start) <= TOL && Math.abs(a.end - b.end) <= TOL);
           const isMerge = !oneToOne && bSubs.some(b => a.start <= b.start + TOL && a.end >= b.end - TOL);
           if (!oneToOne && !isMerge) {
             results.extra.hits.push({
-              fileName: aName, subIdx: i + 1, start: a.start, end: a.end,
+              fileName: aName, subIdx: ii + 1, start: a.start, end: a.end,
               text: flattenText(a.text), reason: 'B 中无对应时间轴',
             });
             bumpExtra(aName);
@@ -526,24 +586,36 @@
       }
 
       // B 中有、A 中无对应文件 → 整文件 missing
-      const aBaseSet = new Set(parsedA.map(p => basenameOf(p.name)));
-      for (const pb of parsedB) {
-        const bBase = basenameOf(pb.name);
-        if (aBaseSet.has(bBase)) continue;
-        for (let j = 0; j < pb.subs.length; j++) {
-          const b = pb.subs[j];
+      for (let j = 0; j < parsedB.length; j++) {
+        if (bPairedIdx.has(j)) continue;
+        const pb = parsedB[j];
+        pairStats.bOnly.push(pb.name);
+        for (let jj = 0; jj < pb.subs.length; jj++) {
+          const b = pb.subs[jj];
           results.missing.hits.push({
-            fileName: pb.name, bSubIdx: j + 1, bFileName: pb.name,
+            fileName: pb.name, bSubIdx: jj + 1, bFileName: pb.name,
             start: b.start, end: b.end, text: flattenText(b.text),
-            reason: 'A 中无对应文件',
+            reason: pairingMode === 'none' ? '无法配对文件（文件名差异过大）' : 'A 中无对应文件',
           });
           bumpMissing(pb.name);
         }
       }
+      results._pairStats = pairStats;
     }
 
-    function basenameOf(name) {
-      return String(name).split('/').pop();
+    // 从文件名中提取序号键：取 basename，去掉扩展名，抽取末尾数字串（如 ep01_中文字幕 → '01'）
+    // 同时去除中间多余内容，仅保留数字作为序号键
+    function extractSeqKey(name) {
+      const base = String(name).split('/').pop().toLowerCase();
+      const noExt = base.replace(/\.srt$/, '');
+      // 抽取所有数字串
+      const nums = noExt.match(/\d+/g);
+      if (!nums || nums.length === 0) return null;
+      // 若有多个数字，取最后一个作为序号（如 01、10），并左垫零为 3 位稳定排序
+      let last = nums[nums.length - 1];
+      // 仅 1-4 位才视为序号（避免误取年份 2024 等）
+      if (last.length < 1 || last.length > 4) return null;
+      return last.padStart(4, '0');
     }
 
     function renderHealthResult(results, hasB) {
