@@ -2065,6 +2065,12 @@ button.btn-secondary:hover:not(:disabled) {
   font-weight: 500;
 }
 
+.hit-reason {
+  font-size: 0.8rem;
+  color: var(--text-muted, #6b7a6f);
+  white-space: nowrap;
+}
+
 .digit-value {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-weight: 600;

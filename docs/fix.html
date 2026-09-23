@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="style.css?v=9" />
+  <link rel="stylesheet" href="style.css?v=12" />
 </head>
 <body>
   <div class="bg-layer" aria-hidden="true"></div>
@@ -34,6 +34,16 @@
           </div>
         </div>
       </div>
+      <div class="field">
+        <label>模板字幕 B（可选，用于时间轴对比）</label>
+        <div class="drop-zone" id="dropZoneTpl">
+          <input type="file" id="subsTplFolder" webkitdirectory multiple hidden />
+          <div class="drop-hint">
+            <span class="drop-icon">📂</span>
+            <span>点击选择文件夹，或直接拖入文件夹</span>
+          </div>
+        </div>
+      </div>
       <div class="opts">
         <label>输出文件夹名称：
           <input type="text" id="folderName" class="folder-name-input" placeholder="fixed" />
@@ -45,13 +55,13 @@
 
     <section class="panel" id="healthPanel" hidden>
       <div class="panel-head"><span class="panel-dot"></span><h2>字幕健康检查</h2></div>
-      <p class="panel-sub">一次性扫描 6 类异常：阿拉伯数字、超长时间轴、时间倒退、时间重叠、空文本、重复块。只读，不修改原文件。</p>
+      <p class="panel-sub">扫描 6 类内部异常：阿拉伯数字、超长时间轴、时间轴倒退、时间轴重叠、空文本、重复块。若已上传模板字幕 B，额外对比 A↔B 时间轴覆盖：A 中缺失（B 有 A 无）、A 中多余（A 有 B 无）。只读，不修改原文件。</p>
       <div class="status" id="statusHealth"></div>
       <div id="healthChips" class="health-chips" hidden></div>
       <div id="healthResult" class="scan-result" hidden></div>
     </section>
   </main>
-  <script src="srt.js?v=9"></script>
+  <script src="srt.js?v=10"></script>
   <script>
     const btnFix = document.getElementById('btnFix');
     const statusFix = document.getElementById('statusFix');
@@ -60,6 +70,57 @@
 
     let sourceType = null; // 'folder' | 'drop'
     let droppedSrtFiles = [];
+
+    // ------- 模板字幕 B（可选，用于时间轴对比） -------
+    const dropZoneTpl   = document.getElementById('dropZoneTpl');
+    const subsTplFolder = document.getElementById('subsTplFolder');
+    const tplHintText   = dropZoneTpl.querySelector('.drop-hint span:last-child');
+    let templateType = null; // 'folder' | 'drop' | null
+    let droppedTplFiles = [];
+    const TPL_DEFAULT_HINT = '点击选择文件夹，或直接拖入文件夹';
+
+    dropZoneTpl.addEventListener('click', () => subsTplFolder.click());
+
+    subsTplFolder.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) {
+        templateType = 'folder';
+        tplHintText.textContent = `已选择模板文件夹（${e.target.files.length} 项），点击重选`;
+      }
+    });
+
+    ['dragover', 'dragenter'].forEach(evt => {
+      dropZoneTpl.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZoneTpl.classList.add('drag-over');
+      });
+    });
+    ['dragleave', 'drop'].forEach(evt => {
+      dropZoneTpl.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZoneTpl.classList.remove('drag-over');
+      });
+    });
+    dropZoneTpl.addEventListener('drop', async (e) => {
+      templateType = 'drop';
+      try {
+        droppedTplFiles = await extractSrtFromDropEvent(e);
+        if (droppedTplFiles.length === 0) {
+          alert('拖入的内容中未找到 SRT 文件');
+          templateType = null;
+          droppedTplFiles = [];
+          tplHintText.textContent = TPL_DEFAULT_HINT;
+        } else {
+          tplHintText.textContent = `已识别 ${droppedTplFiles.length} 个 SRT 模板（B），点击重选`;
+        }
+      } catch (err) {
+        alert('读取拖入内容失败：' + err.message);
+        templateType = null;
+        droppedTplFiles = [];
+        tplHintText.textContent = TPL_DEFAULT_HINT;
+      }
+    });
 
     dropZoneFix.addEventListener('click', () => {
       subsFixFolder.click();
@@ -125,6 +186,28 @@
 
       if (results.length === 0) {
         throw new Error('未找到 SRT 文件');
+      }
+      return results;
+    }
+
+    // 加载模板字幕 B（仿照 loadFixSubtitleFiles）
+    async function loadTplSubtitleFiles() {
+      const results = [];
+      if (templateType === 'folder') {
+        const items = extractSrtFromFileList(subsTplFolder.files);
+        for (const item of items) {
+          const content = await item.file.text();
+          results.push({ name: item.name, content, size: item.file.size });
+        }
+      } else if (templateType === 'drop') {
+        for (const item of droppedTplFiles) {
+          const content = await item.file.text();
+          results.push({ name: item.name, content, size: item.file.size });
+        }
+      }
+      results.sort((a, b) => naturalCompare(a.name, b.name));
+      if (results.length === 0) {
+        throw new Error('模板字幕 B 中未找到 SRT 文件');
       }
       return results;
     }
@@ -215,6 +298,7 @@
     const healthResult   = document.getElementById('healthResult');
     const statusHealth   = document.getElementById('statusHealth');
     const CONTAIN_MIN_GAP_MS = 100;
+    const TIMELINE_TOLERANCE_MS = 50; // A↔B 时间轴对比容差
     const HEALTH_CATEGORIES = [
       { key: 'digit',    label: '阿拉伯数字',  tone: 'warn' },
       { key: 'longaxis', label: '超长时间轴',  tone: 'danger' },
@@ -222,6 +306,8 @@
       { key: 'overlap',  label: '时间轴重叠',  tone: 'warn' },
       { key: 'empty',    label: '空文本',     tone: 'danger' },
       { key: 'dup',      label: '重复块',     tone: 'warn' },
+      { key: 'missing',  label: 'A 时间轴缺失', tone: 'danger' },
+      { key: 'extra',    label: 'A 时间轴多余', tone: 'warn' },
     ];
 
     btnHealth.addEventListener('click', async () => {
@@ -236,13 +322,24 @@
         const files = await loadFixSubtitleFiles();
         const parsed = [];
         for (const f of files) parsed.push({ name: f.name, subs: parseSrt(f.content) });
-        const results = runHealthChecks(parsed);
-        renderHealthResult(results);
+
+        // 模板字幕 B（可选，用于 A↔B 时间轴对比）
+        let parsedB = null;
+        if (templateType) {
+          const bFiles = await loadTplSubtitleFiles();
+          parsedB = [];
+          for (const f of bFiles) parsedB.push({ name: f.name, subs: parseSrt(f.content) });
+        }
+
+        const results = runHealthChecks(parsed, parsedB);
+        const hasB = !!parsedB;
+        renderHealthResult(results, hasB);
         const totalHits = Object.values(results).reduce((s, r) => s + r.hits.length, 0);
         const filesWithHits = new Set();
         for (const r of Object.values(results)) for (const fn of Object.keys(r.fileCount)) filesWithHits.add(fn);
+        const compareHint = hasB ? '，含 A↔B 时间轴对比' : '';
         statusHealth.className = 'status ok';
-        statusHealth.textContent = `扫描完成：共 ${totalHits} 处异常，涉及 ${filesWithHits.size} 个文件（共 ${parsed.length} 个文件）`;
+        statusHealth.textContent = `扫描完成：共 ${totalHits} 处异常，涉及 ${filesWithHits.size} 个文件（共 ${parsed.length} 个文件${compareHint}）`;
       } catch (e) {
         statusHealth.className = 'status err';
         statusHealth.textContent = '扫描失败：' + e.message;
@@ -251,7 +348,7 @@
       }
     });
 
-    function runHealthChecks(parsed) {
+    function runHealthChecks(parsed, parsedB) {
       const results = {};
       for (const c of HEALTH_CATEGORIES) results[c.key] = { hits: [], fileCount: {} };
       for (const p of parsed) {
@@ -358,16 +455,108 @@
           }
         }
       }
+      // A↔B 时间轴对比（仅在传入模板 B 时执行）
+      if (parsedB) runTimelineCompare(parsed, parsedB, results);
       return results;
     }
 
-    function renderHealthResult(results) {
+    // ------- A↔B 时间轴对比 -------
+    // 规则：
+    //   - 按文件名配对（取 basename，忽略路径差异）
+    //   - 容差 TIMELINE_TOLERANCE_MS（50ms）
+    //   - B 中某条 b：若 A 中存在 a 满足 a.start ≤ b.start+容差 且 a.end ≥ b.end-容差 → 已覆盖（含合并）
+    //     否则 → missing（A 缺失）
+    //   - A 中某条 a：若 B 中存在 b 一对一匹配（容差内 start/end 相等）→ 正常
+    //     否则若 a 覆盖了 B 中至少 1 条字幕（a.start ≤ b.start+容差 且 a.end ≥ b.end-容差）→ 合并，正常
+    //     否则 → extra（A 多余）
+    function runTimelineCompare(parsedA, parsedB, results) {
+      const TOL = TIMELINE_TOLERANCE_MS;
+      // B 按文件名建立索引（basename）
+      const bMap = new Map();
+      for (const p of parsedB) bMap.set(basenameOf(p.name), p);
+
+      const bumpMissing = (fn) => { results.missing.fileCount[fn] = (results.missing.fileCount[fn] || 0) + 1; };
+      const bumpExtra   = (fn) => { results.extra.fileCount[fn]   = (results.extra.fileCount[fn]   || 0) + 1; };
+
+      for (const pa of parsedA) {
+        const aName = pa.name;
+        const aBase = basenameOf(aName);
+        const pb = bMap.get(aBase);
+        if (!pb) {
+          // A 中存在但 B 中无对应文件 → A 整文件多余，逐条记为 extra
+          for (let i = 0; i < pa.subs.length; i++) {
+            const a = pa.subs[i];
+            results.extra.hits.push({
+              fileName: aName, subIdx: i + 1, start: a.start, end: a.end,
+              text: flattenText(a.text), reason: 'B 中无对应文件',
+            });
+            bumpExtra(aName);
+          }
+          continue;
+        }
+        const aSubs = pa.subs, bSubs = pb.subs;
+
+        // B 中无对应 A 的文件已在下面处理（遍历 B 时记录 missing）
+        // 1. 检查 B 中每条是否被 A 覆盖（含合并）→ 未覆盖即 missing
+        for (let j = 0; j < bSubs.length; j++) {
+          const b = bSubs[j];
+          const covered = aSubs.some(a => a.start <= b.start + TOL && a.end >= b.end - TOL);
+          if (!covered) {
+            results.missing.hits.push({
+              fileName: aName, bSubIdx: j + 1, bFileName: pb.name,
+              start: b.start, end: b.end, text: flattenText(b.text),
+            });
+            bumpMissing(aName);
+          }
+        }
+
+        // 2. 检查 A 中每条是否在 B 中有对应（一对一 或 合并）→ 否则 extra
+        for (let i = 0; i < aSubs.length; i++) {
+          const a = aSubs[i];
+          const oneToOne = bSubs.some(b => Math.abs(a.start - b.start) <= TOL && Math.abs(a.end - b.end) <= TOL);
+          const isMerge = !oneToOne && bSubs.some(b => a.start <= b.start + TOL && a.end >= b.end - TOL);
+          if (!oneToOne && !isMerge) {
+            results.extra.hits.push({
+              fileName: aName, subIdx: i + 1, start: a.start, end: a.end,
+              text: flattenText(a.text), reason: 'B 中无对应时间轴',
+            });
+            bumpExtra(aName);
+          }
+        }
+      }
+
+      // B 中有、A 中无对应文件 → 整文件 missing
+      const aBaseSet = new Set(parsedA.map(p => basenameOf(p.name)));
+      for (const pb of parsedB) {
+        const bBase = basenameOf(pb.name);
+        if (aBaseSet.has(bBase)) continue;
+        for (let j = 0; j < pb.subs.length; j++) {
+          const b = pb.subs[j];
+          results.missing.hits.push({
+            fileName: pb.name, bSubIdx: j + 1, bFileName: pb.name,
+            start: b.start, end: b.end, text: flattenText(b.text),
+            reason: 'A 中无对应文件',
+          });
+          bumpMissing(pb.name);
+        }
+      }
+    }
+
+    function basenameOf(name) {
+      return String(name).split('/').pop();
+    }
+
+    function renderHealthResult(results, hasB) {
       healthChips.hidden = false;
       healthResult.hidden = false;
       healthChips.innerHTML = '';
       healthResult.innerHTML = '';
 
+      const isCompareOnly = (key) => key === 'missing' || key === 'extra';
+      const skipKey = (key) => !hasB && isCompareOnly(key);
+
       for (const c of HEALTH_CATEGORIES) {
+        if (skipKey(c.key)) continue;
         const r = results[c.key];
         const count = r.hits.length;
         const files = Object.keys(r.fileCount).length;
@@ -378,6 +567,7 @@
       }
 
       for (const c of HEALTH_CATEGORIES) {
+        if (skipKey(c.key)) continue;
         const r = results[c.key];
         const card = document.createElement('details');
         card.className = `health-card ${c.tone}`;
@@ -396,6 +586,8 @@
         else if (c.key === 'overlap')  renderOverlap(body, r.hits, r.fileCount);
         else if (c.key === 'empty')    renderEmpty(body, r.hits, r.fileCount);
         else if (c.key === 'dup')      renderDup(body, r.hits, r.fileCount);
+        else if (c.key === 'missing')  renderMissing(body, r.hits, r.fileCount);
+        else if (c.key === 'extra')    renderExtra(body, r.hits, r.fileCount);
         card.appendChild(body);
         healthResult.appendChild(card);
       }
@@ -535,6 +727,48 @@
         const tr = document.createElement('tr');
         tr.className = 'dup-row';
         tr.innerHTML = `<td>${i + 1}</td><td class="hit-fname" title="${escapeHtmlAttr(h.fileName)}">${escapeHtml(h.fileName.split('/').pop())}</td><td class="long-count">${h.count}</td><td>${formatTimecode(h.start)} → ${formatTimecode(h.end)}</td><td>${h.subIdxs.join(', ')}</td><td class="hit-ctx">${escapeHtml(truncate(h.text, 60))}</td>`;
+        tbody.appendChild(tr);
+      }
+      if (hits.length > limit) tbody.appendChild(moreRow(6, hits.length - limit));
+      container.appendChild(table);
+    }
+
+    // 7. A 时间轴缺失（B 有 A 无）
+    function renderMissing(container, hits, fileHitCount) {
+      container.appendChild(buildSummary(fileHitCount));
+      const table = document.createElement('table');
+      table.className = 'hit-table';
+      table.innerHTML = `<thead><tr><th style="width:2.5rem">#</th><th>文件（A）</th><th style="width:5rem">B 字幕#</th><th style="width:13rem">B 时间轴</th><th>B 内容</th><th style="width:8rem">原因</th></tr></thead><tbody></tbody>`;
+      const tbody = table.querySelector('tbody');
+      const limit = 500;
+      const showCount = Math.min(hits.length, limit);
+      for (let i = 0; i < showCount; i++) {
+        const h = hits[i];
+        const tr = document.createElement('tr');
+        tr.className = 'reverse-row';
+        const reason = h.reason || 'A 中无对应覆盖';
+        tr.innerHTML = `<td>${i + 1}</td><td class="hit-fname" title="${escapeHtmlAttr(h.fileName)}">${escapeHtml(h.fileName.split('/').pop())}</td><td>#${h.bSubIdx}</td><td>${formatTimecode(h.start)} → ${formatTimecode(h.end)}</td><td class="hit-ctx">${escapeHtml(truncate(h.text, 50))}</td><td class="hit-reason">${escapeHtml(reason)}</td>`;
+        tbody.appendChild(tr);
+      }
+      if (hits.length > limit) tbody.appendChild(moreRow(6, hits.length - limit));
+      container.appendChild(table);
+    }
+
+    // 8. A 时间轴多余（A 有 B 无）
+    function renderExtra(container, hits, fileHitCount) {
+      container.appendChild(buildSummary(fileHitCount));
+      const table = document.createElement('table');
+      table.className = 'hit-table';
+      table.innerHTML = `<thead><tr><th style="width:2.5rem">#</th><th>文件（A）</th><th style="width:3rem">A#</th><th style="width:13rem">A 时间轴</th><th>A 内容</th><th style="width:8rem">原因</th></tr></thead><tbody></tbody>`;
+      const tbody = table.querySelector('tbody');
+      const limit = 500;
+      const showCount = Math.min(hits.length, limit);
+      for (let i = 0; i < showCount; i++) {
+        const h = hits[i];
+        const tr = document.createElement('tr');
+        tr.className = 'overlap-row';
+        const reason = h.reason || 'B 中无对应时间轴';
+        tr.innerHTML = `<td>${i + 1}</td><td class="hit-fname" title="${escapeHtmlAttr(h.fileName)}">${escapeHtml(h.fileName.split('/').pop())}</td><td>${h.subIdx}</td><td>${formatTimecode(h.start)} → ${formatTimecode(h.end)}</td><td class="hit-ctx">${escapeHtml(truncate(h.text, 50))}</td><td class="hit-reason">${escapeHtml(reason)}</td>`;
         tbody.appendChild(tr);
       }
       if (hits.length > limit) tbody.appendChild(moreRow(6, hits.length - limit));
