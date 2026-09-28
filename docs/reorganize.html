@@ -33,10 +33,32 @@
 
   <main class="hud-main">
     <h1 class="page-title">语种重组</h1>
-    <p class="page-sub">将按「类别」组织的外包文件夹，重组为按「语种」组织的输出结构</p>
+    <p class="page-sub">将按「类别」组织的外包内容，重组为按「语种」组织的输出。大文件推荐 ZIP 模式（ZIP 进 → 服务器重组 → ZIP 下载）。</p>
 
     <section class="panel">
-      <div class="panel-head"><span class="panel-dot"></span><h2>1. 选择源根目录</h2></div>
+      <div class="panel-head"><span class="panel-dot"></span><h2>ZIP 快速重组（推荐 · 大文件）</h2></div>
+      <p class="panel-sub">把整个剧文件夹压缩为 ZIP 上传（顶层为剧名文件夹，或直接是各类别文件夹）。服务器流式重组后返回结果 ZIP，速度远快于逐文件复制。需先运行 start.bat 启动后端，并通过 http://127.0.0.1:8000/reorganize 打开本页。</p>
+      <div class="drop-zone" id="zipDrop">
+        <div class="dz-inner">
+          <div class="dz-icon">🗜️</div>
+          <div id="zipText">点击选择 ZIP 压缩包，或直接拖入</div>
+          <div class="dz-hint">输出为 ZIP 下载，不写入源目录</div>
+        </div>
+      </div>
+      <input type="file" id="zipInput" accept=".zip" hidden />
+      <div class="actions">
+        <label style="display:inline-flex;align-items:center;gap:.4rem;font-size:.88rem">剧名（可选）：<input type="text" id="zipShowName" class="folder-name-input" placeholder="默认取顶层文件夹名" style="width:14rem" /></label>
+        <button type="button" id="btnZipRun" class="btn-primary" disabled>开始重组并下载</button>
+      </div>
+      <div class="progress-box" id="zipProg" hidden>
+        <div class="progress-head"><span id="zipStage">上传中…</span><span id="zipPct" class="progress-count">0%</span></div>
+        <div class="progress-bar"><div id="zipFill" class="progress-fill"></div></div>
+      </div>
+      <div class="status" id="statusZip"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><span class="panel-dot"></span><h2>文件夹重组（备用 · 逐文件复制）</h2></div>
       <p class="panel-sub">
         源目录需包含带「旁白/压制/原剧/字幕/净版」字样的子文件夹，其中旁白/压制/字幕下按语种代码（de/en/es…）分子文件夹。
         英语(en)为基准语言，其余语种各产出一个输出文件夹。
@@ -219,6 +241,112 @@ if (!window.showDirectoryPicker) {
   statusPick.textContent = '请使用 Chrome/Edge 浏览器，需要 File System Access API 支持。';
 }
 
+// ------- ZIP 快速重组 -------
+const zipDrop   = document.getElementById('zipDrop');
+const zipText   = document.getElementById('zipText');
+const zipInput  = document.getElementById('zipInput');
+const zipShowName = document.getElementById('zipShowName');
+const btnZipRun = document.getElementById('btnZipRun');
+const statusZip = document.getElementById('statusZip');
+const zipProg   = document.getElementById('zipProg');
+const zipStage  = document.getElementById('zipStage');
+const zipPct    = document.getElementById('zipPct');
+const zipFill   = document.getElementById('zipFill');
+let zipFile = null;
+
+function setZipFile(f) {
+  if (!f) return;
+  if (!/\.zip$/i.test(f.name)) {
+    statusZip.className = 'status err';
+    statusZip.textContent = '请选择 .zip 压缩包';
+    return;
+  }
+  zipFile = f;
+  zipText.innerHTML = `已选择：<b>${escapeHtml(f.name)}</b>（${(f.size / 1048576).toFixed(1)} MB）`;
+  btnZipRun.disabled = false;
+  statusZip.className = 'status';
+  statusZip.textContent = '点击「开始重组并下载」';
+}
+
+zipDrop.addEventListener('click', () => zipInput.click());
+zipInput.addEventListener('change', () => setZipFile(zipInput.files[0]));
+['dragenter', 'dragover'].forEach(ev => zipDrop.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); zipDrop.classList.add('dz-hover'); }));
+['dragleave', 'drop'].forEach(ev => zipDrop.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); zipDrop.classList.remove('dz-hover'); }));
+zipDrop.addEventListener('drop', e => {
+  const f = e.dataTransfer?.files?.[0];
+  if (f) setZipFile(f);
+});
+
+btnZipRun.addEventListener('click', () => {
+  if (!zipFile) return;
+  btnZipRun.disabled = true;
+  zipProg.hidden = false;
+  zipStage.textContent = '上传中…';
+  zipPct.textContent = '0%';
+  zipFill.style.width = '0%';
+  zipFill.classList.remove('indeterminate');
+  statusZip.className = 'status';
+  statusZip.textContent = '上传并重组中，请勿关闭页面…';
+
+  const fd = new FormData();
+  fd.append('subtitles', zipFile, zipFile.name);
+  const sn = zipShowName.value.trim();
+  if (sn) fd.append('show_name', sn);
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/api/reorganize');
+  xhr.responseType = 'blob';
+  xhr.upload.onprogress = (e) => {
+    if (e.lengthComputable) {
+      const pct = Math.round(e.loaded / e.total * 100);
+      zipPct.textContent = pct + '%';
+      zipFill.style.width = pct + '%';
+      if (pct >= 100) zipStage.textContent = '服务器重组中…';
+    }
+  };
+  xhr.onload = () => {
+    zipProg.hidden = true;
+    if (xhr.status === 200) {
+      const blob = xhr.response;
+      let outName = `${zipShowName.value.trim() || zipFile.name.replace(/\.zip$/i, '')}_重组.zip`;
+      try {
+        const show = xhr.getResponseHeader('X-Reorg-Show');
+        if (show) outName = `${decodeURIComponent(show)}_重组.zip`;
+      } catch (_) {}
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = outName;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      let warn = '';
+      try {
+        const w = xhr.getResponseHeader('X-Reorg-Warnings');
+        if (w && decodeURIComponent(w)) warn = '（警告：' + decodeURIComponent(w) + '）';
+      } catch (_) {}
+      statusZip.className = 'status ok';
+      statusZip.textContent = `完成：${outName}（${(blob.size / 1048576).toFixed(1)} MB）已开始下载${warn}，详情见包内「重组报告.txt」`;
+    } else {
+      const b = xhr.response;
+      const done = (msg) => {
+        statusZip.className = 'status err';
+        statusZip.textContent = `失败：${msg || ('HTTP ' + xhr.status)}`;
+        btnZipRun.disabled = false;
+      };
+      if (b && b.text) b.text().then(t => done(t.slice(0, 300))).catch(() => done(''));
+      else done('');
+      return;
+    }
+    btnZipRun.disabled = false;
+  };
+  xhr.onerror = () => {
+    zipProg.hidden = true;
+    btnZipRun.disabled = false;
+    statusZip.className = 'status err';
+    statusZip.textContent = '无法连接后端。请先运行项目根目录的 start.bat 启动服务，然后通过 http://127.0.0.1:8000/reorganize 打开本页再使用 ZIP 模式。';
+  };
+  xhr.send(fd);
+});
+
 // ------- 选择根目录 -------
 async function useRootHandle(handle) {
   if (!handle || handle.kind !== 'directory') {
@@ -354,12 +482,14 @@ async function scanSource(rootHandle) {
 // 注：英X字幕/英X旁白需要同时合并 en（基准）和 X（目标语种）两个语种文件夹的内容
 function outputSubFolders(langCode) {
   const c = LANG_CHAR[langCode];
+  // 中文/繁中固定为「中文压制视频」，其余语种为「X语压制视频」
+  const dubName = (langCode === 'zh' || langCode === 'zh-hant') ? '中文压制视频' : `${c}语压制视频`;
   return [
     { id: 'ORIG', name: '原剧',           op: 'copy', srcLangs: ['*'] },
     { id: 'CLEAN',name: '净版视频',       op: 'copy', srcLangs: ['*'] },
     { id: 'SUB',  name: `英${c}字幕`,     op: 'copy', srcLangs: [BASE_LANG, langCode] },
     { id: 'VO',   name: `英${c}旁白`,     op: 'copy', srcLangs: [BASE_LANG, langCode] },
-    { id: 'DUB',  name: `${c}语压制视频`, op: 'copy', srcLangs: [langCode] },
+    { id: 'DUB',  name: dubName,          op: 'copy', srcLangs: [langCode] },
   ];
 }
 
