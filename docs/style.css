@@ -2071,6 +2071,29 @@ button.btn-secondary:hover:not(:disabled) {
   white-space: nowrap;
 }
 
+/* 关键词删除 */
+.kw-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.85rem;
+}
+.kw-bar .folder-name-input { flex: 1 1 18rem; min-width: 12rem; }
+.kw-case { font-size: 0.85rem; color: var(--text-muted); display: inline-flex; align-items: center; gap: 0.3rem; }
+.kw-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 0.5rem;
+}
+.kw-sel-all { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.88rem; cursor: pointer; }
+.kw-count { font-size: 0.85rem; color: var(--text-muted); }
+.kw-table td:first-child { text-align: center; }
+.kw-table input[type="checkbox"] { cursor: pointer; }
+
 .digit-value {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-weight: 600;

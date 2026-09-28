@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="style.css?v=12" />
+  <link rel="stylesheet" href="style.css?v=13" />
 </head>
 <body>
   <div class="bg-layer" aria-hidden="true"></div>
@@ -51,6 +51,19 @@
       </div>
       <div class="actions"><button type="button" id="btnFix">批量修复</button><button type="button" id="btnHealth" class="btn-ghost">健康检查</button></div>
       <div class="status" id="statusFix"></div>
+    </section>
+
+    <section class="panel" id="kwPanel">
+      <div class="panel-head"><span class="panel-dot"></span><h2>关键词删除</h2></div>
+      <p class="panel-sub">输入关键词，查找包含该词的字幕条目，勾选后批量删除所选条目及其时间轴并导出。多个关键词用逗号分隔（任一匹配即命中）。</p>
+      <div class="kw-bar">
+        <input type="text" id="kwInput" class="folder-name-input" placeholder="输入关键词，多个用逗号分隔" />
+        <button type="button" id="btnKwFind" class="btn-ghost">查找</button>
+        <label class="kw-case"><input type="checkbox" id="kwCase" /> 区分大小写</label>
+        <button type="button" id="btnKwDel" class="btn-primary" hidden>删除选中并导出</button>
+      </div>
+      <div class="status" id="statusKw"></div>
+      <div id="kwResult" class="scan-result" hidden></div>
     </section>
 
     <section class="panel" id="healthPanel" hidden>
@@ -290,6 +303,196 @@
         btnFix.disabled = false;
       }
     };
+
+    // ------- 关键词删除（查找 → 勾选 → 删除并导出） -------
+    const kwInput      = document.getElementById('kwInput');
+    const kwCase       = document.getElementById('kwCase');
+    const btnKwFind    = document.getElementById('btnKwFind');
+    const btnKwDel     = document.getElementById('btnKwDel');
+    const statusKw     = document.getElementById('statusKw');
+    const kwResult     = document.getElementById('kwResult');
+    // 选中集合：Set<hitId>，hitId = fileName + '|' + subIdx
+    const kwSelected   = new Set();
+    // 最近一次查找命中的所有 hitId（用于全选）
+    let kwHitIds       = [];
+    let kwParsed       = null; // 缓存解析结果，删除时复用
+
+    btnKwFind.addEventListener('click', async () => {
+      if (!sourceType) { alert('请先上传或拖入字幕（A）'); return; }
+      const raw = kwInput.value.trim();
+      if (!raw) { alert('请输入关键词'); return; }
+      btnKwFind.disabled = true;
+      statusKw.className = 'status';
+      statusKw.textContent = '查找中…';
+      kwResult.hidden = true;
+      btnKwDel.hidden = true;
+      kwSelected.clear();
+      try {
+        const files = await loadFixSubtitleFiles();
+        kwParsed = [];
+        for (const f of files) kwParsed.push({ name: f.name, subs: parseSrt(f.content) });
+        const keywords = raw.split(/[,，]/).map(s => s.trim()).filter(s => s.length > 0);
+        const hits = [];
+        for (const p of kwParsed) {
+          for (let i = 0; i < p.subs.length; i++) {
+            const line = p.subs[i];
+            const text = String(line.text || '');
+            const matchedKw = matchKeywords(text, keywords, kwCase.checked);
+            if (matchedKw) {
+              const hitId = p.name + '|' + (i + 1);
+              hits.push({
+                hitId, fileName: p.name, subIdx: i + 1,
+                start: line.start, end: line.end, text, matchedKw,
+              });
+            }
+          }
+        }
+        kwHitIds = hits.map(h => h.hitId);
+        renderKwResult(hits);
+        statusKw.className = 'status ok';
+        statusKw.textContent = `查找到 ${hits.length} 条命中（跨 ${countUniqueFiles(hits)} 个文件）`;
+        btnKwDel.hidden = hits.length === 0;
+      } catch (e) {
+        statusKw.className = 'status err';
+        statusKw.textContent = '查找失败：' + e.message;
+      } finally {
+        btnKwFind.disabled = false;
+      }
+    });
+
+    function matchKeywords(text, keywords, caseSensitive) {
+      const hay = caseSensitive ? text : text.toLowerCase();
+      for (const kw of keywords) {
+        const needle = caseSensitive ? kw : kw.toLowerCase();
+        if (hay.includes(needle)) return kw;
+      }
+      return null;
+    }
+
+    function countUniqueFiles(hits) {
+      const s = new Set();
+      for (const h of hits) s.add(h.fileName);
+      return s.size;
+    }
+
+    function renderKwResult(hits) {
+      kwResult.hidden = false;
+      kwResult.innerHTML = '';
+      const limit = 1000;
+      const showCount = Math.min(hits.length, limit);
+
+      const toolbar = document.createElement('div');
+      toolbar.className = 'kw-toolbar';
+      toolbar.innerHTML = `
+        <label class="kw-sel-all"><input type="checkbox" id="kwSelAll" /> 全选</label>
+        <span class="kw-count">命中 ${hits.length} 条${hits.length > limit ? `（仅显示前 ${limit} 条）` : ''} · 已选 <span id="kwSelCount">0</span></span>
+      `;
+      kwResult.appendChild(toolbar);
+
+      const table = document.createElement('table');
+      table.className = 'hit-table kw-table';
+      table.innerHTML = `<thead><tr><th style="width:2.5rem">选</th><th style="width:2.5rem">#</th><th>文件</th><th style="width:3rem">字幕#</th><th style="width:13rem">时间轴</th><th>文本</th></tr></thead><tbody></tbody>`;
+      const tbody = table.querySelector('tbody');
+      for (let i = 0; i < showCount; i++) {
+        const h = hits[i];
+        const tr = document.createElement('tr');
+        tr.className = 'kw-row';
+        const checked = kwSelected.has(h.hitId) ? 'checked' : '';
+        tr.innerHTML = `<td><input type="checkbox" class="kw-item" data-hitid="${escapeHtmlAttr(h.hitId)}" ${checked}/></td><td>${i + 1}</td><td class="hit-fname" title="${escapeHtmlAttr(h.fileName)}">${escapeHtml(h.fileName.split('/').pop())}</td><td>${h.subIdx}</td><td>${formatTimecode(h.start)} → ${formatTimecode(h.end)}</td><td class="hit-ctx">${highlightKw(h.text, h.matchedKw, kwCase.checked)}</td>`;
+        tbody.appendChild(tr);
+      }
+      if (hits.length > limit) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td colspan="6" class="hit-more">…省略 ${hits.length - limit} 条（如需删除未显示项，请缩小关键词范围）</td>`;
+        tbody.appendChild(tr);
+      }
+      kwResult.appendChild(table);
+
+      // 行内复选框
+      table.querySelectorAll('.kw-item').forEach(cb => {
+        cb.addEventListener('change', () => {
+          const id = cb.getAttribute('data-hitid');
+          if (cb.checked) kwSelected.add(id); else kwSelected.delete(id);
+          updateKwSelCount();
+        });
+      });
+      // 全选（仅作用于当前显示项）
+      const selAll = document.getElementById('kwSelAll');
+      selAll.addEventListener('change', () => {
+        const showIds = Array.from(table.querySelectorAll('.kw-item')).map(cb => cb.getAttribute('data-hitid'));
+        if (selAll.checked) showIds.forEach(id => kwSelected.add(id));
+        else showIds.forEach(id => kwSelected.delete(id));
+        table.querySelectorAll('.kw-item').forEach(cb => cb.checked = selAll.checked);
+        updateKwSelCount();
+      });
+      updateKwSelCount();
+    }
+
+    function updateKwSelCount() {
+      const el = document.getElementById('kwSelCount');
+      if (el) el.textContent = String(kwSelected.size);
+    }
+
+    function highlightKw(text, kw, caseSensitive) {
+      const safe = escapeHtml(text);
+      if (!kw) return safe;
+      const kwSafe = escapeHtml(kw);
+      const flags = caseSensitive ? 'g' : 'gi';
+      try {
+        return safe.replace(new RegExp(escapeRegExp(kwSafe), flags), m => `<mark>${m}</mark>`);
+      } catch (e) {
+        return safe;
+      }
+    }
+    function escapeRegExp(s) {
+      return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    btnKwDel.addEventListener('click', async () => {
+      if (!kwParsed) { alert('请先查找关键词'); return; }
+      if (kwSelected.size === 0) { alert('请勾选要删除的字幕条目'); return; }
+      if (!confirm(`确认删除 ${kwSelected.size} 条字幕及其时间轴并导出？`)) return;
+      btnKwDel.disabled = true;
+      statusKw.className = 'status';
+      statusKw.textContent = '删除并导出中…';
+      try {
+        const outputFiles = [];
+        let totalRemoved = 0;
+        for (const p of kwParsed) {
+          const kept = [];
+          for (let i = 0; i < p.subs.length; i++) {
+            const hitId = p.name + '|' + (i + 1);
+            if (kwSelected.has(hitId)) {
+              totalRemoved++;
+            } else {
+              kept.push(p.subs[i]);
+            }
+          }
+          if (kept.length === p.subs.length) continue; // 本文件无删除，跳过导出
+          const outName = p.name.split('/').pop();
+          outputFiles.push({ path: outName, content: generateSrt(kept) });
+        }
+        if (outputFiles.length === 0) {
+          statusKw.className = 'status err';
+          statusKw.textContent = '没有文件被修改';
+          return;
+        }
+        if (!window.showDirectoryPicker) throw new Error('当前浏览器不支持文件夹导出，请使用 Chrome/Edge');
+        const result = await saveFilesToFolder(outputFiles);
+        if (!result.success) throw new Error(result.message);
+        statusKw.className = 'status ok';
+        statusKw.textContent = `已删除 ${totalRemoved} 条字幕，导出 ${outputFiles.length} 个文件到所选目录`;
+        // 删除后清理选择状态，避免二次操作残留
+        kwSelected.clear();
+        btnKwDel.hidden = true;
+        kwResult.hidden = true;
+      } catch (e) {
+        statusKw.className = 'status err';
+        statusKw.textContent = e.message;
+      } finally {
+        btnKwDel.disabled = false;
+      }
+    });
 
     // ------- 字幕健康检查（一次性 6 类扫描，复用 parseSrt 结果） -------
     const btnHealth      = document.getElementById('btnHealth');
