@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="style.css?v=10" />
+  <link rel="stylesheet" href="style.css?v=15" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
@@ -169,7 +169,7 @@
       for (const f of fileList) {
         const used = glossaryFiles.map(g => g.lang);
         const lang = LANG_OPTIONS.find(l => !used.includes(l)) || LANG_OPTIONS[0];
-        glossaryFiles.push({ file: f, lang, outputFolder: lang });
+        glossaryFiles.push({ file: f, lang, outputFolder: '替换' });
       }
       renderGlossaryList();
       renderOutputFolderConfigs();
@@ -184,7 +184,7 @@
     function setGlossaryLang(idx, lang) {
       if (glossaryFiles[idx]) {
         glossaryFiles[idx].lang = lang;
-        if (!glossaryFiles[idx]._folderCustom) glossaryFiles[idx].outputFolder = lang;
+        if (!glossaryFiles[idx]._folderCustom) glossaryFiles[idx].outputFolder = '替换';
         renderGlossaryList();
         renderOutputFolderConfigs();
       }
@@ -197,7 +197,7 @@
           glossaryFiles[idx].outputFolder = trimmed;
           glossaryFiles[idx]._folderCustom = true;
         } else {
-          glossaryFiles[idx].outputFolder = glossaryFiles[idx].lang;
+          glossaryFiles[idx].outputFolder = '替换';
           glossaryFiles[idx]._folderCustom = false;
         }
       }
@@ -237,7 +237,7 @@
         const input = document.createElement('input');
         input.type = 'text';
         input.className = 'output-config-input';
-        input.value = g.outputFolder || g.lang;
+        input.value = g.outputFolder || '替换';
         input.placeholder = '文件夹名';
         input.title = '一键导出时，在根目录下创建此名称的子文件夹';
         input.onchange = () => {
@@ -1197,7 +1197,7 @@
 
         for (let gi = 0; gi < glossaryFiles.length; gi++) {
           const g = glossaryFiles[gi];
-          const outputFolder = (g.outputFolder || g.lang).replace(/[\\/:*?"<>|]/g, '_');
+          const outputFolder = (g.outputFolder || '替换').replace(/[\\/:*?"<>|]/g, '_');
           const { outputs } = buildGlossaryOutputs(gi);
           for (const o of outputs) {
             allOutputFiles.push({ path: `${outputFolder}/${o.outName}`, content: o.content });
@@ -1214,7 +1214,7 @@
         const result = await saveFilesToFolder(allOutputFiles);
         if (!result.success) throw new Error(result.message);
         statusReplace.className = 'status ok';
-        const folderList = glossaryFiles.map(g => (g.outputFolder || g.lang)).join('、');
+        const folderList = glossaryFiles.map(g => (g.outputFolder || '替换')).join('、');
         statusReplace.textContent = `${result.message}（输出到：${folderList}）`;
       } catch (e) {
         statusReplace.className = 'status err';
@@ -1267,7 +1267,7 @@
         const limit = preview.checked ? 1 : subtitleFiles.length;
 
         const suffix = document.getElementById('langSuffix').value;
-        const folderName = (glossaryFiles[0]?.outputFolder || 'replaced').replace(/[\\/:*?"<>|]/g, '_');
+        const folderName = (glossaryFiles[0]?.outputFolder || '替换').replace(/[\\/:*?"<>|]/g, '_');
 
         for (let i = 0; i < limit; i++) {
           const subFile = subtitleFiles[i];
