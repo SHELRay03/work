@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>文件名同步 · 字幕工具箱</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="style.css?v=15" />
+</head>
+<body>
+  <div class="bg-layer" aria-hidden="true"></div>
+
+  <header class="hud-top">
+    <a href="index.html" class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="1.5" rx=".5" fill="#fafffd"/><rect x="2" y="7.25" width="9" height="1.5" rx=".5" fill="#fafffd" opacity=".9"/><rect x="2" y="10.5" width="11" height="1.5" rx=".5" fill="#fafffd" opacity=".75"/></svg>
+      </span>
+      字幕工具箱
+    </a>
+    <nav class="hud-nav">
+      <a href="index.html">首页</a>
+      <a href="reorganize.html">语种重组</a>
+      <a href="preprocess.html">预处理</a>
+      <a href="replace.html">术语替换</a>
+      <a href="fix.html">SRT 修复</a>
+      <a href="align.html">跨语言对齐</a>
+      <a href="flatten.html">目录平铺</a>
+      <a href="rename.html" class="active">重命名同步</a>
+    </nav>
+  </header>
+
+  <main class="hud-main">
+    <h1 class="page-title">文件名同步</h1>
+    <p class="page-sub">按数字顺序将 A 组文件重命名为对应 B 组文件名（保留 A 的扩展名，basename 取 B 的数字）。</p>
+
+    <section class="panel">
+      <div class="panel-head"><span class="panel-dot"></span><h2>1. A 组：选择文件夹（要被重命名的源）</h2></div>
+      <p class="panel-sub">通过目录选择器获取 DirectoryHandle，仅作为重命名源；不会读取文件内容（move 失败回退时才会读写一次）。</p>
+      <div class="drop-zone" id="pickDropA">
+        <div class="dz-inner">
+          <div class="dz-icon">📁</div>
+          <div id="pickTextA">点击选择 A 组文件夹</div>
+          <div class="dz-hint">仅支持 Chrome/Edge；操作将修改原目录，请确保已备份</div>
+        </div>
+      </div>
+      <div class="actions">
+        <button type="button" id="btnPickA" class="btn-ghost">选择文件夹</button>
+        <button type="button" id="btnClearA" class="btn-ghost" hidden>清空 A 组</button>
+      </div>
+      <div class="status" id="statusA"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><span class="panel-dot"></span><h2>2. B 组：上传文件（仅作文件名模板）</h2></div>
+      <p class="panel-sub">仅取 B 组文件名作为新名模板，不会读取内容。点击选择或直接拖入多个文件。</p>
+      <div class="drop-zone" id="dropB">
+        <input type="file" id="fileInputB" multiple hidden />
+        <div class="dz-inner">
+          <div class="dz-icon">📄</div>
+          <div id="dropTextB">点击选择文件，或直接拖入多个文件</div>
+          <div class="dz-hint">B 组只用作文件名模板，不会上传内容</div>
+        </div>
+      </div>
+      <div class="actions">
+        <button type="button" id="btnClearB" class="btn-ghost" hidden>清空 B 组</button>
+      </div>
+      <div class="status" id="statusB"></div>
+    </section>
+
+    <section class="panel" id="previewPanel" hidden>
+      <div class="panel-head"><span class="panel-dot"></span><h2>3. 预览映射 &amp; 执行重命名</h2></div>
+      <div id="previewContent"></div>
+      <div class="actions">
+        <button type="button" id="btnExec" class="btn-primary" hidden>执行重命名</button>
+      </div>
+      <div class="status" id="statusExec"></div>
+    </section>
+  </main>
+
+<script>
+// =============================================================
+// 文件名同步 — 独立页面
+// A 组：DirectoryHandle（要被原地重命名的源）
+// B 组：File 对象（仅取文件名作模板）
+// 排序：parseInt(filename) 升序；保留 A 扩展名，basename 用 B 的数字
+// 使用 FileSystemFileHandle.move(newName) 原地改名，旧浏览器回退到 创建+写入+删除
+// 仅 Chrome/Edge
+// =============================================================
+
+const state = {
+  aDirHandle: null,    // DirectoryHandle for A
+  aFiles: [],          // [{ handle, name }] top-level files in A dir
+  bFiles: [],          // [{ name, file }] File objects for B
+  plan: null,          // computed mapping plan
+};
+
+const pickDropA      = document.getElementById('pickDropA');
+const pickTextA      = document.getElementById('pickTextA');
+const statusA        = document.getElementById('statusA');
+const btnPickA       = document.getElementById('btnPickA');
+const btnClearA      = document.getElementById('btnClearA');
+
+const dropB          = document.getElementById('dropB');
+const fileInputB     = document.getElementById('fileInputB');
+const dropTextB      = document.getElementById('dropTextB');
+const statusB        = document.getElementById('statusB');
+const btnClearB      = document.getElementById('btnClearB');
+
+const previewPanel   = document.getElementById('previewPanel');
+const previewContent = document.getElementById('previewContent');
+const btnExec        = document.getElementById('btnExec');
+const statusExec     = document.getElementById('statusExec');
+
+// 浏览器支持检查
+if (!window.showDirectoryPicker) {
+  pickTextA.textContent = '当前浏览器不支持目录选择';
+  pickDropA.style.opacity = '0.5';
+  pickDropA.style.cursor = 'not-allowed';
+  statusA.className = 'status err';
+  statusA.textContent = '请使用 Chrome/Edge 浏览器，需要 File System Access API 支持。';
+  btnPickA.disabled = true;
+}
+
+// ------- 工具：从文件名抽取前导数字（parseInt 语义） -------
+function numKey(name) {
+  const n = parseInt(String(name), 10);
+  return Number.isNaN(n) ? Number.MAX_SAFE_INTEGER : n;
+}
+
+// ------- 取扩展名（含 .），无扩展名返回空串 -------
+function getExt(name) {
+  const m = String(name).match(/(\.[^.]+)$/);
+  return m ? m[1] : '';
+}
+
+// ------- 取 basename（去扩展名） -------
+function getBaseName(name) {
+  return String(name).replace(/(\.[^.]+)$/, '');
+}
+
+// ------- HTML 转义 -------
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// =============================================================
+// A 组：选文件夹
+// =============================================================
+btnPickA.addEventListener('click', async () => {
+  if (!window.showDirectoryPicker) return;
+  try {
+    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    await useADirHandle(handle);
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      statusA.className = 'status';
+      statusA.textContent = '已取消选择';
+    } else {
+      statusA.className = 'status err';
+      statusA.textContent = '选择目录失败：' + e.message;
+    }
+  }
+});
+
+async function useADirHandle(handle) {
+  if (!handle || handle.kind !== 'directory') {
+    statusA.className = 'status err';
+    statusA.textContent = '请提供文件夹（而非单个文件）';
+    return;
+  }
+  const perm = await handle.requestPermission?.({ mode: 'readwrite' });
+  if (perm && perm !== 'granted') {
+    statusA.className = 'status err';
+    statusA.textContent = `未授权「${handle.name}」读写权限，已跳过`;
+    return;
+  }
+  state.aDirHandle = handle;
+  state.aFiles = [];
+  // 仅枚举顶层文件（用户场景：纯数字文件名，如 1.srt）
+  for await (const entry of handle.values()) {
+    if (entry.kind === 'file') {
+      state.aFiles.push({ handle: entry, name: entry.name });
+    }
+  }
+  btnClearA.hidden = false;
+  statusA.className = 'status ok';
+  statusA.textContent = `已选择「${handle.name}」，扫描到 ${state.aFiles.length} 个顶层文件`;
+  tryBuildPlan();
+}
+
+btnClearA.addEventListener('click', () => {
+  state.aDirHandle = null;
+  state.aFiles = [];
+  state.plan = null;
+  btnClearA.hidden = true;
+  statusA.className = 'status';
+  statusA.textContent = '已清空 A 组';
+  tryBuildPlan();
+});
+
+// =============================================================
+// B 组：文件选择 + 拖拽
+// =============================================================
+dropB.addEventListener('click', () => fileInputB.click());
+
+fileInputB.addEventListener('change', (e) => {
+  setBFiles(e.target.files);
+});
+
+function setBFiles(fileList) {
+  const arr = [];
+  for (const f of fileList) {
+    arr.push({ name: f.name, file: f });
+  }
+  state.bFiles = arr;
+  btnClearB.hidden = arr.length === 0;
+  if (arr.length > 0) {
+    statusB.className = 'status ok';
+    statusB.textContent = `已加入 ${arr.length} 个 B 组文件`;
+    dropTextB.textContent = `已选择 ${arr.length} 个 B 组文件，点击重选`;
+  } else {
+    statusB.className = 'status';
+    statusB.textContent = '';
+    dropTextB.textContent = '点击选择文件，或直接拖入多个文件';
+  }
+  tryBuildPlan();
+}
+
+['dragenter', 'dragover'].forEach(evt => {
+  dropB.addEventListener(evt, (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropB.classList.add('dz-hover');
+  });
+});
+['dragleave', 'drop'].forEach(evt => {
+  dropB.addEventListener(evt, (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropB.classList.remove('dz-hover');
+  });
+});
+dropB.addEventListener('drop', (e) => {
+  const files = e.dataTransfer?.files;
+  if (!files || files.length === 0) return;
+  setBFiles(files);
+});
+
+btnClearB.addEventListener('click', () => {
+  state.bFiles = [];
+  fileInputB.value = '';
+  btnClearB.hidden = true;
+  statusB.className = 'status';
+  statusB.textContent = '已清空 B 组';
+  dropTextB.textContent = '点击选择文件，或直接拖入多个文件';
+  tryBuildPlan();
+});
+
+// =============================================================
+// 构建映射计划：排序 → 数量校验 → 重名校验 → 冲突校验 → 渲染预览
+// =============================================================
+function tryBuildPlan() {
+  state.plan = null;
+  previewPanel.hidden = true;
+  previewContent.innerHTML = '';
+  btnExec.hidden = true;
+  statusExec.className = 'status';
+  statusExec.textContent = '';
+
+  const hasA = state.aDirHandle && state.aFiles.length > 0;
+  const hasB = state.bFiles.length > 0;
+  if (!hasA || !hasB) return;
+
+  const aSorted = [...state.aFiles].sort((a, b) => numKey(a.name) - numKey(b.name));
+  const bSorted = [...state.bFiles].sort((a, b) => numKey(a.name) - numKey(b.name));
+
+  // 1. 数量校验
+  if (aSorted.length !== bSorted.length) {
+    state.plan = { error: `A、B 数量不相等：A 组 ${aSorted.length} 个，B 组 ${bSorted.length} 个` };
+    renderPreview();
+    return;
+  }
+
+  // 2. B 组重名检测（按 basename 去重）
+  const bBasenameSeen = new Set();
+  const bDup = [];
+  for (const b of bSorted) {
+    const bn = getBaseName(b.name);
+    if (bBasenameSeen.has(bn)) bDup.push(bn);
+    else bBasenameSeen.add(bn);
+  }
+  if (bDup.length > 0) {
+    state.plan = { error: `B 组内存在重名 basename：${bDup.map(s => escapeHtml(s)).join('、')}（共 ${bDup.length} 项冲突）` };
+    renderPreview();
+    return;
+  }
+
+  // 3. 构建映射表 + 冲突检测（newName 与 A 目录现有文件冲突）
+  const existingA = new Set(aSorted.map(a => a.name));
+  const pairs = [];
+  for (let i = 0; i < aSorted.length; i++) {
+    const a = aSorted[i];
+    const b = bSorted[i];
+    const aExt = getExt(a.name);
+    const bBase = getBaseName(b.name);
+    const newName = bBase + aExt;
+    const conflict = newName !== a.name && existingA.has(newName);
+    pairs.push({ handle: a.handle, oldName: a.name, newName, conflict });
+  }
+
+  const conflictList = pairs.filter(p => p.conflict);
+  state.plan = { pairs, aDir: state.aDirHandle, conflicts: conflictList };
+  renderPreview();
+}
+
+function renderPreview() {
+  previewPanel.hidden = false;
+  if (!state.plan) return;
+
+  if (state.plan.error) {
+    previewContent.innerHTML = `<div class="status err" style="margin:0">${state.plan.error}</div>`;
+    btnExec.hidden = true;
+    return;
+  }
+
+  const pairs = state.plan.pairs;
+  const conflicts = state.plan.conflicts || [];
+  const conflictCount = conflicts.length;
+  const noopCount = pairs.filter(p => p.newName === p.oldName).length;
+  const actionable = pairs.filter(p => !p.conflict && p.newName !== p.oldName).length;
+
+  let html = `<div class="report-summary">共 ${pairs.length} 对映射：实际重命名 ${actionable} 个，无需改名 ${noopCount} 个，冲突 ${conflictCount} 个。</div>`;
+  if (conflictCount > 0) {
+    const list = conflicts.map(c => `${escapeHtml(c.oldName)} → ${escapeHtml(c.newName)}`).join('、');
+    html += `<div class="status err" style="margin:0 0 0.6rem">检测到 ${conflictCount} 项冲突（新名与 A 目录现有文件重名），已阻止执行：${list}</div>`;
+  }
+  html += `<div class="file-list"><table class="pair-table" style="width:100%;border-collapse:collapse;font-size:0.82rem">`;
+  html += `<thead><tr><th style="text-align:left;padding:0.4rem 0.6rem">#</th><th style="text-align:left;padding:0.4rem 0.6rem">A 原文件名</th><th style="text-align:left;padding:0.4rem 0.6rem">→</th><th style="text-align:left;padding:0.4rem 0.6rem">A 新文件名</th><th style="text-align:left;padding:0.4rem 0.6rem">状态</th></tr></thead><tbody>`;
+  pairs.forEach((p, i) => {
+    const isNoop = p.newName === p.oldName;
+    const cls = p.conflict ? 'skip' : (isNoop ? 'dir' : 'ok');
+    const tag = p.conflict ? '冲突' : (isNoop ? '同名无需改' : '将重命名');
+    html += `<tr class="file-item ${cls}">
+      <td style="padding:0.35rem 0.5rem">${i + 1}</td>
+      <td style="padding:0.35rem 0.5rem" class="file-name">${escapeHtml(p.oldName)}</td>
+      <td style="padding:0.35rem 0.5rem" class="file-from">→</td>
+      <td style="padding:0.35rem 0.5rem" class="file-name">${escapeHtml(p.newName)}</td>
+      <td style="padding:0.35rem 0.5rem" class="file-err">${tag}</td>
+    </tr>`;
+  });
+  html += `</tbody></table></div>`;
+  previewContent.innerHTML = html;
+  // 有任何冲突时阻止执行（按用户规范「报错列出」）
+  btnExec.hidden = conflictCount > 0 || actionable === 0;
+}
+
+// =============================================================
+// 执行重命名：move() 优先，回退 创建+写入+删除
+// =============================================================
+btnExec.addEventListener('click', async () => {
+  if (!state.plan || state.plan.error) return;
+  const aDir = state.plan.aDir;
+  const pairs = state.plan.pairs;
+  btnExec.disabled = true;
+  statusExec.className = 'status';
+  statusExec.textContent = `正在重命名 ${pairs.length} 个文件…`;
+
+  const results = [];
+  for (const p of pairs) {
+    if (p.conflict) {
+      results.push({ ...p, status: 'skipped', error: '与 A 目录现有文件冲突' });
+      continue;
+    }
+    if (p.newName === p.oldName) {
+      results.push({ ...p, status: 'noop' });
+      continue;
+    }
+    try {
+      // 优先尝试 FileSystemFileHandle.move()
+      if (typeof p.handle.move === 'function') {
+        try {
+          await p.handle.move(p.newName);
+          results.push({ ...p, status: 'ok' });
+          continue;
+        } catch (e) {
+          // move 失败（含不支持），尝试回退路径
+          if (e && e.name === 'TypeError' && /move is not a function/i.test(e.message || '')) {
+            // 走回退
+          } else if (e && (e.name === 'AbortError' || e.name === 'NotAllowedError')) {
+            throw e; // 用户取消或权限不足，不回退
+          }
+          // 其它错误也尝试回退（例如某些 Chrome 版本 move 不可用）
+        }
+      }
+      // 回退：在 A 目录创建新文件 + 写入 + 删旧文件
+      const file = await p.handle.getFile();
+      const buf = await file.arrayBuffer();
+      const newHandle = await aDir.getFileHandle(p.newName, { create: true });
+      const writable = await newHandle.createWritable();
+      await writable.write(buf);
+      await writable.close();
+      await aDir.removeEntry(p.oldName);
+      results.push({ ...p, status: 'ok-fallback' });
+    } catch (e) {
+      results.push({ ...p, status: 'error', error: e.message || String(e) });
+    }
+  }
+
+  renderResult(results);
+  btnExec.disabled = false;
+});
+
+function renderResult(results) {
+  const ok = results.filter(r => r.status === 'ok' || r.status === 'ok-fallback').length;
+  const noop = results.filter(r => r.status === 'noop').length;
+  const skipped = results.filter(r => r.status === 'skipped').length;
+  const failed = results.filter(r => r.status === 'error').length;
+  const success = failed === 0;
+  statusExec.className = success ? 'status ok' : 'status err';
+  statusExec.textContent = `重命名完成：成功 ${ok}（其中回退 ${results.filter(r => r.status === 'ok-fallback').length}），无需改名 ${noop}，冲突跳过 ${skipped}，失败 ${failed}。`;
+
+  // 在预览下方追加执行结果表
+  let html = `<div class="report-summary">执行结果：成功 ${ok}，无需改名 ${noop}，跳过 ${skipped}，失败 ${failed}。</div>`;
+  html += `<div class="file-list"><table class="pair-table" style="width:100%;border-collapse:collapse;font-size:0.82rem">`;
+  html += `<thead><tr><th style="text-align:left;padding:0.4rem 0.6rem">#</th><th style="text-align:left;padding:0.4rem 0.6rem">原文件名</th><th style="text-align:left;padding:0.4rem 0.6rem">→</th><th style="text-align:left;padding:0.4rem 0.6rem">新文件名</th><th style="text-align:left;padding:0.4rem 0.6rem">结果</th></tr></thead><tbody>`;
+  results.forEach((r, i) => {
+    const statusText = r.status === 'ok' ? '✓ 已重命名'
+      : r.status === 'ok-fallback' ? '✓ 已重命名（回退）'
+      : r.status === 'noop' ? '– 同名无需改'
+      : r.status === 'skipped' ? '⚠ 冲突跳过'
+      : `✗ 失败：${escapeHtml(r.error || '未知错误')}`;
+    const cls = r.status === 'ok' || r.status === 'ok-fallback' ? 'ok'
+      : r.status === 'noop' ? 'dir'
+      : r.status === 'skipped' ? 'skip' : 'skip';
+    html += `<tr class="file-item ${cls}">
+      <td style="padding:0.35rem 0.5rem">${i + 1}</td>
+      <td style="padding:0.35rem 0.5rem" class="file-name">${escapeHtml(r.oldName)}</td>
+      <td style="padding:0.35rem 0.5rem" class="file-from">→</td>
+      <td style="padding:0.35rem 0.5rem" class="file-name">${escapeHtml(r.newName)}</td>
+      <td style="padding:0.35rem 0.5rem" class="file-err">${statusText}</td>
+    </tr>`;
+  });
+  html += `</tbody></table></div>`;
+  previewContent.innerHTML = html;
+  // 重命名后 A 组文件已变化，提示用户重选
+  state.aDirHandle = null;
+  state.aFiles = [];
+  state.plan = null;
+  btnClearA.hidden = true;
+  btnExec.hidden = true;
+}
+</script>
+<style>
+/* 双栏输入：A / B 并排（窄屏堆叠） */
+.hud-main .panel + .panel { margin-top: 1rem; }
+
+.dz-inner {
+  text-align: center;
+  padding: 1rem 1.25rem;
+  font-size: 0.86rem;
+  color: var(--text-muted);
+}
+.dz-inner .dz-icon { font-size: 1.6rem; margin-bottom: 0.35rem; }
+
+/* 预览/结果表格 */
+.pair-table th {
+  background: rgba(232, 246, 239, 0.98);
+  color: var(--mint-deep);
+  font-weight: 600;
+  border-bottom: 1px solid var(--line);
+}
+.pair-table td { border-bottom: 1px solid rgba(221, 229, 223, 0.5); vertical-align: top; }
+.file-item.ok .file-name { color: var(--mint-deep); }
+.file-item.skip .file-name { color: #8b6a00; }
+.file-item.skip .file-err { color: var(--danger); }
+.file-item.dir .file-name { color: var(--text-muted); }
+
+.report-summary {
+  padding: 0.7rem 0.9rem;
+  background: rgba(94, 201, 160, 0.1);
+  border-radius: 8px;
+  margin-bottom: 0.8rem;
+  font-size: 0.85rem;
+  color: var(--mint-deep);
+  font-weight: 500;
+}
+</style>
+</body>
+</html>

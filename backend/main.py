@@ -89,6 +89,11 @@ async def page_audit():
     return _html_page("audit.html")
 
 
+@app.get("/rename", response_class=HTMLResponse)
+async def page_rename():
+    return _html_page("rename.html")
+
+
 def _zip_response(data: bytes, filename: str) -> StreamingResponse:
     return StreamingResponse(
         io.BytesIO(data),
