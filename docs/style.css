@@ -2591,3 +2591,116 @@ tr.long-contained-row td {
   font-weight: 500;
 }
 
+/* ===== 首页：工作流 + 工具分组 ===== */
+.home-section {
+  margin-bottom: 2rem;
+}
+.home-section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--mint-deep);
+}
+.home-section-title .sec-bar {
+  width: 3px;
+  height: 1rem;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--mint-bright), var(--mint-deep));
+}
+.home-section-title .sec-hint {
+  font-size: 0.78rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-left: 0.25rem;
+}
+
+/* 标准流程：横向步骤卡片 */
+.workflow-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding-bottom: 0.4rem;
+}
+.workflow-row::-webkit-scrollbar { height: 6px; }
+.workflow-row::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+
+.workflow-step {
+  flex: 1 1 0;
+  min-width: 180px;
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.1rem 1rem;
+  transition: transform 0.18s, box-shadow 0.18s, border-color 0.18s;
+  position: relative;
+}
+.workflow-step:hover {
+  transform: translateY(-2px);
+  border-color: var(--mint);
+  box-shadow: 0 8px 24px var(--mint-glow);
+}
+.workflow-step .step-no {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  line-height: 22px;
+  text-align: center;
+  border-radius: 50%;
+  background: linear-gradient(145deg, var(--mint-bright), var(--mint-deep));
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  margin-bottom: 0.6rem;
+}
+.workflow-step h3 {
+  margin: 0 0 0.3rem;
+  font-size: 0.98rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.workflow-step p {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.workflow-arrow {
+  flex: 0 0 auto;
+  align-self: center;
+  color: var(--mint);
+  font-size: 1.2rem;
+  font-weight: 700;
+  opacity: 0.7;
+}
+
+/* 辅助工具：grid */
+.tools-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+/* 导航分组分隔符 */
+.nav-sep {
+  width: 1px;
+  height: 1.1rem;
+  background: var(--line-strong);
+  margin: 0 0.25rem;
+  opacity: 0.6;
+}
+
+/* 窄屏：工作流失效纵向 */
+@media (max-width: 900px) {
+  .workflow-row { flex-wrap: wrap; }
+  .workflow-arrow { display: none; }
+  .workflow-step { flex: 1 1 calc(50% - 0.5rem); min-width: 0; }
+}
+

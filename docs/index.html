@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=16" />
 </head>
 <body>
   <div class="bg-layer" aria-hidden="true"></div>
@@ -22,64 +22,73 @@
     </a>
     <nav class="hud-nav">
       <a href="index.html" class="active">首页</a>
-      <a href="reorganize.html">语种重组</a>
       <a href="preprocess.html">预处理</a>
+      <a href="reorganize.html">语种重组</a>
       <a href="replace.html">术语替换</a>
       <a href="fix.html">SRT 修复</a>
-      <a href="align.html">跨语言对齐</a>
       <a href="flatten.html">目录平铺</a>
+      <span class="nav-sep"></span>
+      <a href="align.html">跨语言对齐</a>
       <a href="rename.html">重命名同步</a>
     </nav>
   </header>
 
   <main class="hud-main">
     <h1 class="page-title">工作台</h1>
-    <p class="page-sub">选择下方模块进入对应功能</p>
+    <p class="page-sub">按顺序执行标准流程，辅助工具按需使用</p>
 
-    <div class="home-grid">
-      <a class="tile" href="reorganize.html">
-        <div class="tile-icon">组</div>
-        <h3>语种重组</h3>
-        <p>将按类别组织的外包文件夹，重组为按语种分类的输出结构。</p>
-        <span class="tile-go">进入模块 →</span>
-      </a>
-      <a class="tile" href="preprocess.html">
-        <div class="tile-icon">预</div>
-        <h3>预处理</h3>
-        <p>规范外包返还的文件夹名与文件名，作为后续流程的入口。</p>
-        <span class="tile-go">进入模块 →</span>
-      </a>
-      <a class="tile" href="replace.html">
-        <div class="tile-icon">词</div>
-        <h3>术语替换</h3>
-        <p>上传本地化清单与字幕，将 Source 列内容替换为 Target 列。</p>
-        <span class="tile-go">进入模块 →</span>
-      </a>
-      <a class="tile" href="fix.html">
-        <div class="tile-icon">幕</div>
-        <h3>SRT 批量修复</h3>
-        <p>批量规范化字幕格式，便于导入剪映。</p>
-        <span class="tile-go">进入模块 →</span>
-      </a>
-      <a class="tile" href="align.html">
-        <div class="tile-icon">对</div>
-        <h3>跨语言术语对齐</h3>
-        <p>以源语言术语为锚点，自动配对多语种对应译法并批量修正。</p>
-        <span class="tile-go">进入模块 →</span>
-      </a>
-      <a class="tile" href="flatten.html">
-        <div class="tile-icon">平</div>
-        <h3>目录平铺</h3>
-        <p>将嵌套子文件夹中的文件全部平铺到根目录，自动跳过同名并清理空目录。</p>
-        <span class="tile-go">进入模块 →</span>
-      </a>
-      <a class="tile" href="rename.html">
-        <div class="tile-icon">🔁</div>
-        <h3>文件名同步</h3>
-        <p>按数字顺序将 A 组文件原地重命名为对应 B 组文件名，保留 A 的扩展名。</p>
-        <span class="tile-go">进入模块 →</span>
-      </a>
-    </div>
+    <section class="home-section">
+      <div class="home-section-title"><span class="sec-bar"></span>标准流程 <span class="sec-hint">（按顺序执行）</span></div>
+      <div class="workflow-row">
+        <a class="workflow-step" href="preprocess.html">
+          <span class="step-no">1</span>
+          <h3>预处理</h3>
+          <p>规范外包返还的文件夹名与文件名，作为后续流程的入口。</p>
+        </a>
+        <span class="workflow-arrow">→</span>
+        <a class="workflow-step" href="reorganize.html">
+          <span class="step-no">2</span>
+          <h3>语种重组</h3>
+          <p>将按类别组织的外包文件夹，重组为按语种分类的输出结构。</p>
+        </a>
+        <span class="workflow-arrow">→</span>
+        <a class="workflow-step" href="replace.html">
+          <span class="step-no">3</span>
+          <h3>术语替换</h3>
+          <p>上传本地化清单与字幕，将 Source 列内容替换为 Target 列。</p>
+        </a>
+        <span class="workflow-arrow">→</span>
+        <a class="workflow-step" href="fix.html">
+          <span class="step-no">4</span>
+          <h3>SRT 修复</h3>
+          <p>批量规范化字幕格式，健康检查，便于导入剪映。</p>
+        </a>
+        <span class="workflow-arrow">→</span>
+        <a class="workflow-step" href="flatten.html">
+          <span class="step-no">5</span>
+          <h3>目录平铺</h3>
+          <p>将嵌套子文件夹中的文件全部平铺到根目录，清理空目录。</p>
+        </a>
+      </div>
+    </section>
+
+    <section class="home-section">
+      <div class="home-section-title"><span class="sec-bar"></span>辅助工具 <span class="sec-hint">（按需使用）</span></div>
+      <div class="tools-grid">
+        <a class="tile" href="align.html">
+          <div class="tile-icon">对</div>
+          <h3>跨语言术语对齐</h3>
+          <p>以源语言术语为锚点，自动配对多语种对应译法并批量修正。</p>
+          <span class="tile-go">进入模块 →</span>
+        </a>
+        <a class="tile" href="rename.html">
+          <div class="tile-icon">🔁</div>
+          <h3>文件名同步</h3>
+          <p>按数字顺序将 A 组文件原地重命名为对应 B 组文件名，保留 A 的扩展名。</p>
+          <span class="tile-go">进入模块 →</span>
+        </a>
+      </div>
+    </section>
   </main>
 </body>
 </html>
