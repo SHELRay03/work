@@ -2704,3 +2704,29 @@ tr.long-contained-row td {
   .workflow-step { flex: 1 1 calc(50% - 0.5rem); min-width: 0; }
 }
 
+/* ===== 复杂页面多栏布局 ===== */
+/* fix.html 健康检查：折叠卡片双栏排列，展开时跨满栏保证表格可读 */
+#healthResult {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+  align-items: start;
+  margin-top: 0.5rem;
+}
+#healthResult .health-card { margin-bottom: 0; }
+#healthResult .health-card[open] { grid-column: 1 / -1; }
+
+/* fix.html 关键词删除结果：工具栏 + 表格区分 */
+#kwResult {
+  margin-top: 0.5rem;
+}
+#kwResult .kw-toolbar {
+  margin-bottom: 0.5rem;
+}
+
+/* replace.html 扫描区：窄屏断点与首页统一 */
+@media (max-width: 900px) {
+  .scan-layout { grid-template-columns: 1fr !important; }
+  #healthResult { grid-template-columns: 1fr; }
+}
+
