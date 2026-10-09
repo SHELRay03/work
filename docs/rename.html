@@ -43,7 +43,7 @@
         <div class="dz-inner">
           <div class="dz-icon">📁</div>
           <div id="pickTextA">点击选择 A 组文件夹</div>
-          <div class="dz-hint">仅支持 Chrome/Edge；操作将修改原目录，请确保已备份</div>
+          <div class="dz-hint">仅支持 Chrome/Edge；操作将修改原目录，请确保已备份。拖拽获取的目录句柄无法原地重命名，请使用点击选择</div>
         </div>
       </div>
       <div class="actions">
@@ -75,6 +75,7 @@
       <div id="previewContent"></div>
       <div class="actions">
         <button type="button" id="btnExec" class="btn-primary" hidden>执行重命名</button>
+        <button type="button" id="btnExecSkip" class="btn-ghost" hidden>跳过冲突项执行</button>
       </div>
       <div class="status" id="statusExec"></div>
     </section>
@@ -112,6 +113,7 @@ const btnClearB      = document.getElementById('btnClearB');
 const previewPanel   = document.getElementById('previewPanel');
 const previewContent = document.getElementById('previewContent');
 const btnExec        = document.getElementById('btnExec');
+const btnExecSkip    = document.getElementById('btnExecSkip');
 const statusExec     = document.getElementById('statusExec');
 
 // 浏览器支持检查
@@ -201,6 +203,8 @@ btnClearA.addEventListener('click', () => {
   tryBuildPlan();
 });
 
+// ------- A 组不支持拖拽文件夹：FileSystemDirectoryEntry 无法转为 FileSystemDirectoryHandle，move 需要 handle -------
+
 // =============================================================
 // B 组：文件选择 + 拖拽
 // =============================================================
@@ -267,6 +271,7 @@ function tryBuildPlan() {
   previewPanel.hidden = true;
   previewContent.innerHTML = '';
   btnExec.hidden = true;
+  btnExecSkip.hidden = true;
   statusExec.className = 'status';
   statusExec.textContent = '';
 
@@ -323,6 +328,7 @@ function renderPreview() {
   if (state.plan.error) {
     previewContent.innerHTML = `<div class="status err" style="margin:0">${state.plan.error}</div>`;
     btnExec.hidden = true;
+    btnExecSkip.hidden = true;
     return;
   }
 
@@ -335,7 +341,7 @@ function renderPreview() {
   let html = `<div class="report-summary">共 ${pairs.length} 对映射：实际重命名 ${actionable} 个，无需改名 ${noopCount} 个，冲突 ${conflictCount} 个。</div>`;
   if (conflictCount > 0) {
     const list = conflicts.map(c => `${escapeHtml(c.oldName)} → ${escapeHtml(c.newName)}`).join('、');
-    html += `<div class="status err" style="margin:0 0 0.6rem">检测到 ${conflictCount} 项冲突（新名与 A 目录现有文件重名），已阻止执行：${list}</div>`;
+    html += `<div class="status err" style="margin:0 0 0.6rem">检测到 ${conflictCount} 项冲突（新名与 A 目录现有文件重名）：${list}<br>解决方案：先手动重命名 A 目录中的同名文件，或点击「跳过冲突项执行」仅处理无冲突项。</div>`;
   }
   html += `<div class="file-list"><table class="pair-table" style="width:100%;border-collapse:collapse;font-size:0.82rem">`;
   html += `<thead><tr><th style="text-align:left;padding:0.4rem 0.6rem">#</th><th style="text-align:left;padding:0.4rem 0.6rem">A 原文件名</th><th style="text-align:left;padding:0.4rem 0.6rem">→</th><th style="text-align:left;padding:0.4rem 0.6rem">A 新文件名</th><th style="text-align:left;padding:0.4rem 0.6rem">状态</th></tr></thead><tbody>`;
@@ -353,25 +359,33 @@ function renderPreview() {
   });
   html += `</tbody></table></div>`;
   previewContent.innerHTML = html;
-  // 有任何冲突时阻止执行（按用户规范「报错列出」）
-  btnExec.hidden = conflictCount > 0 || actionable === 0;
+  // 有冲突时提供两种选择：跳过冲突项执行 / 全部执行（含冲突项）
+  btnExec.hidden = actionable === 0 && conflictCount === 0;
+  btnExecSkip.hidden = conflictCount === 0 || actionable === 0;
+  if (conflictCount > 0) {
+    btnExec.textContent = `执行重命名（含 ${conflictCount} 项冲突）`;
+    btnExecSkip.textContent = `跳过冲突项执行（${actionable} 项）`;
+  } else {
+    btnExec.textContent = '执行重命名';
+  }
 }
 
 // =============================================================
 // 执行重命名：move() 优先，回退 创建+写入+删除
 // =============================================================
-btnExec.addEventListener('click', async () => {
+async function executeRename(skipConflicts) {
   if (!state.plan || state.plan.error) return;
   const aDir = state.plan.aDir;
   const pairs = state.plan.pairs;
   btnExec.disabled = true;
+  btnExecSkip.disabled = true;
   statusExec.className = 'status';
   statusExec.textContent = `正在重命名 ${pairs.length} 个文件…`;
 
   const results = [];
   for (const p of pairs) {
-    if (p.conflict) {
-      results.push({ ...p, status: 'skipped', error: '与 A 目录现有文件冲突' });
+    if (p.conflict && skipConflicts) {
+      results.push({ ...p, status: 'skipped', error: '跳过冲突项' });
       continue;
     }
     if (p.newName === p.oldName) {
@@ -411,7 +425,11 @@ btnExec.addEventListener('click', async () => {
 
   renderResult(results);
   btnExec.disabled = false;
-});
+  btnExecSkip.disabled = false;
+}
+
+btnExec.addEventListener('click', () => executeRename(false));
+btnExecSkip.addEventListener('click', () => executeRename(true));
 
 function renderResult(results) {
   const ok = results.filter(r => r.status === 'ok' || r.status === 'ok-fallback').length;
@@ -451,6 +469,7 @@ function renderResult(results) {
   state.plan = null;
   btnClearA.hidden = true;
   btnExec.hidden = true;
+  btnExecSkip.hidden = true;
 }
 </script>
 <style>
