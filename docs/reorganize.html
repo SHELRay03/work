@@ -52,10 +52,9 @@
         </div>
       </div>
       <input type="file" id="zipFileInput" accept=".zip" hidden />
-      <div style="margin-top:0.6rem;display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
-        <label style="font-size:0.82rem;color:var(--text,#2d3a33)">剧名（可选）：</label>
-        <input type="text" id="zipShowName" placeholder="默认取 ZIP 顶层文件夹名"
-          style="flex:1;min-width:12rem;padding:0.4rem 0.6rem;border:1px solid var(--line,#dde5df);border-radius:6px;background:var(--bg,#fff);color:var(--text,#2d3a33)" />
+      <div class="show-name-row">
+        <label class="show-name-label">剧名（可选）：</label>
+        <input type="text" id="zipShowName" class="show-name-input" placeholder="默认取 ZIP 顶层文件夹名" />
       </div>
       <div class="status" id="zipStatus"></div>
       <div class="progress-box" id="zipProgressBox" hidden>
@@ -108,6 +107,32 @@
   </main>
 
 <style>
+  .show-name-row {
+    margin-top: 0.6rem;
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .show-name-label {
+    font-size: 0.82rem;
+    color: var(--text, #2d3a33);
+  }
+  .show-name-input {
+    flex: 1;
+    min-width: 12rem;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--line, #dde5df);
+    border-radius: 6px;
+    background: var(--bg, #fff);
+    color: var(--text, #2d3a33);
+    font-family: inherit;
+    font-size: 0.86rem;
+  }
+  .show-name-input:focus {
+    outline: 2px solid rgba(94, 201, 160, 0.45);
+    outline-offset: 1px;
+  }
   .reorg-tree { margin: 0.6rem 0; }
   .reorg-lang-group {
     margin-bottom: 0.9rem;

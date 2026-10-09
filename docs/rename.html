@@ -340,18 +340,18 @@ function renderPreview() {
     const list = conflicts.map(c => `${escapeHtml(c.oldName)} → ${escapeHtml(c.newName)}`).join('、');
     html += `<div class="status err" style="margin:0 0 0.6rem">检测到 ${conflictCount} 项冲突（新名与 A 目录现有文件重名）：${list}<br>解决方案：先手动重命名 A 目录中的同名文件，或点击「跳过冲突项执行」仅处理无冲突项。</div>`;
   }
-  html += `<div class="file-list"><table class="pair-table" style="width:100%;border-collapse:collapse;font-size:0.82rem">`;
-  html += `<thead><tr><th style="text-align:left;padding:0.4rem 0.6rem">#</th><th style="text-align:left;padding:0.4rem 0.6rem">A 原文件名</th><th style="text-align:left;padding:0.4rem 0.6rem">→</th><th style="text-align:left;padding:0.4rem 0.6rem">A 新文件名</th><th style="text-align:left;padding:0.4rem 0.6rem">状态</th></tr></thead><tbody>`;
+  html += `<div class="file-list"><table class="pair-table">`;
+  html += `<thead><tr><th>#</th><th>A 原文件名</th><th>→</th><th>A 新文件名</th><th>状态</th></tr></thead><tbody>`;
   pairs.forEach((p, i) => {
     const isNoop = p.newName === p.oldName;
     const cls = p.conflict ? 'skip' : (isNoop ? 'dir' : 'ok');
     const tag = p.conflict ? '冲突' : (isNoop ? '同名无需改' : '将重命名');
     html += `<tr class="file-item ${cls}">
-      <td style="padding:0.35rem 0.5rem">${i + 1}</td>
-      <td style="padding:0.35rem 0.5rem" class="file-name">${escapeHtml(p.oldName)}</td>
-      <td style="padding:0.35rem 0.5rem" class="file-from">→</td>
-      <td style="padding:0.35rem 0.5rem" class="file-name">${escapeHtml(p.newName)}</td>
-      <td style="padding:0.35rem 0.5rem" class="file-err">${tag}</td>
+      <td>${i + 1}</td>
+      <td class="file-name">${escapeHtml(p.oldName)}</td>
+      <td class="file-from">→</td>
+      <td class="file-name">${escapeHtml(p.newName)}</td>
+      <td class="file-err">${tag}</td>
     </tr>`;
   });
   html += `</tbody></table></div>`;
@@ -474,8 +474,8 @@ function renderResult(results) {
 
   // 在预览下方追加执行结果表
   let html = `<div class="report-summary">执行结果：成功 ${ok}，无需改名 ${noop}，跳过 ${skipped}，失败 ${failed}。</div>`;
-  html += `<div class="file-list"><table class="pair-table" style="width:100%;border-collapse:collapse;font-size:0.82rem">`;
-  html += `<thead><tr><th style="text-align:left;padding:0.4rem 0.6rem">#</th><th style="text-align:left;padding:0.4rem 0.6rem">原文件名</th><th style="text-align:left;padding:0.4rem 0.6rem">→</th><th style="text-align:left;padding:0.4rem 0.6rem">新文件名</th><th style="text-align:left;padding:0.4rem 0.6rem">结果</th></tr></thead><tbody>`;
+  html += `<div class="file-list"><table class="pair-table">`;
+  html += `<thead><tr><th>#</th><th>原文件名</th><th>→</th><th>新文件名</th><th>结果</th></tr></thead><tbody>`;
   results.forEach((r, i) => {
     const statusText = r.status === 'ok' ? '✓ 已重命名'
       : r.status === 'ok-fallback' ? '✓ 已重命名（回退）'
@@ -486,11 +486,11 @@ function renderResult(results) {
       : r.status === 'noop' ? 'dir'
       : r.status === 'skipped' ? 'skip' : 'skip';
     html += `<tr class="file-item ${cls}">
-      <td style="padding:0.35rem 0.5rem">${i + 1}</td>
-      <td style="padding:0.35rem 0.5rem" class="file-name">${escapeHtml(r.oldName)}</td>
-      <td style="padding:0.35rem 0.5rem" class="file-from">→</td>
-      <td style="padding:0.35rem 0.5rem" class="file-name">${escapeHtml(r.newName)}</td>
-      <td style="padding:0.35rem 0.5rem" class="file-err">${statusText}</td>
+      <td>${i + 1}</td>
+      <td class="file-name">${escapeHtml(r.oldName)}</td>
+      <td class="file-from">→</td>
+      <td class="file-name">${escapeHtml(r.newName)}</td>
+      <td class="file-err">${statusText}</td>
     </tr>`;
   });
   html += `</tbody></table></div>`;
@@ -517,13 +517,20 @@ function renderResult(results) {
 .dz-inner .dz-icon { font-size: 1.6rem; margin-bottom: 0.35rem; }
 
 /* 预览/结果表格 */
+.pair-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
 .pair-table th {
   background: rgba(232, 246, 239, 0.98);
   color: var(--mint-deep);
   font-weight: 600;
   border-bottom: 1px solid var(--line);
+  text-align: left;
+  padding: 0.4rem 0.6rem;
 }
-.pair-table td { border-bottom: 1px solid rgba(221, 229, 223, 0.5); vertical-align: top; }
+.pair-table td { border-bottom: 1px solid rgba(221, 229, 223, 0.5); vertical-align: top; padding: 0.35rem 0.5rem; }
 .file-item.ok .file-name { color: var(--mint-deep); }
 .file-item.skip .file-name { color: #8b6a00; }
 .file-item.skip .file-err { color: var(--danger); }
