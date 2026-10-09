@@ -165,6 +165,7 @@
   .file-rename-group h4 { margin: 0 0 0.3rem; font-size: 0.8rem; color: var(--text, #2d3a33); }
 </style>
 
+<script src="utils.js"></script>
 <script>
 // =============================================================
 // 预处理模块 — 独立页面
@@ -812,10 +813,6 @@ btnReScan.addEventListener('click', () => {
   statusCfg.textContent = '';
 });
 
-// ------- 工具函数 -------
-function escapeHtml(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
 </script>
 </body>
 </html>

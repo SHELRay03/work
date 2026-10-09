@@ -81,6 +81,7 @@
     </section>
   </main>
 
+<script src="utils.js"></script>
 <script>
 // =============================================================
 // 文件名同步 — 独立页面
@@ -141,11 +142,6 @@ function getExt(name) {
 // ------- 取 basename（去扩展名） -------
 function getBaseName(name) {
   return String(name).replace(/(\.[^.]+)$/, '');
-}
-
-// ------- HTML 转义 -------
-function escapeHtml(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 // =============================================================
@@ -359,11 +355,11 @@ function renderPreview() {
   });
   html += `</tbody></table></div>`;
   previewContent.innerHTML = html;
-  // 有冲突时提供两种选择：跳过冲突项执行 / 全部执行（含冲突项）
+  // 有冲突时：btnExec 用两步法自动解决冲突；btnExecSkip 可跳过冲突项
   btnExec.hidden = actionable === 0 && conflictCount === 0;
   btnExecSkip.hidden = conflictCount === 0 || actionable === 0;
   if (conflictCount > 0) {
-    btnExec.textContent = `执行重命名（含 ${conflictCount} 项冲突）`;
+    btnExec.textContent = `执行重命名（自动解决 ${conflictCount} 项冲突）`;
     btnExecSkip.textContent = `跳过冲突项执行（${actionable} 项）`;
   } else {
     btnExec.textContent = '执行重命名';
@@ -371,18 +367,68 @@ function renderPreview() {
 }
 
 // =============================================================
-// 执行重命名：move() 优先，回退 创建+写入+删除
+// 单文件重命名：move() 优先，回退 创建+写入+删除
+// =============================================================
+async function renameOne(handle, oldName, newName, aDir) {
+  if (typeof handle.move === 'function') {
+    try {
+      await handle.move(newName);
+      return { status: 'ok' };
+    } catch (e) {
+      if (e && (e.name === 'AbortError' || e.name === 'NotAllowedError')) throw e;
+      // move 失败走回退
+    }
+  }
+  const file = await handle.getFile();
+  const buf = await file.arrayBuffer();
+  const newHandle = await aDir.getFileHandle(newName, { create: true });
+  const writable = await newHandle.createWritable();
+  await writable.write(buf);
+  await writable.close();
+  await aDir.removeEntry(oldName);
+  return { status: 'ok-fallback' };
+}
+
+// =============================================================
+// 执行重命名
+// skipConflicts=true：跳过冲突项
+// skipConflicts=false：有冲突时用两步法自动解决（先全部改临时名，再改目标名）
 // =============================================================
 async function executeRename(skipConflicts) {
   if (!state.plan || state.plan.error) return;
   const aDir = state.plan.aDir;
   const pairs = state.plan.pairs;
+  const hasConflict = pairs.some(p => p.conflict);
+  const useTwoStep = hasConflict && !skipConflicts;
+
   btnExec.disabled = true;
   btnExecSkip.disabled = true;
   statusExec.className = 'status';
-  statusExec.textContent = `正在重命名 ${pairs.length} 个文件…`;
+  if (useTwoStep) {
+    statusExec.textContent = `两步法重命名中（共 ${pairs.length} 个文件）…`;
+  } else {
+    statusExec.textContent = `正在重命名 ${pairs.length} 个文件…`;
+  }
 
   const results = [];
+
+  // 第一步：所有要改名的文件先改成临时名（仅两步法）
+  if (useTwoStep) {
+    for (let i = 0; i < pairs.length; i++) {
+      const p = pairs[i];
+      if (p.newName === p.oldName) continue;
+      p._tmpName = `__rt_${i}_${p.oldName}`;
+      try {
+        await renameOne(p.handle, p.oldName, p._tmpName, aDir);
+      } catch (e) {
+        results.push({ ...p, status: 'error', error: '临时重命名失败：' + (e.message || e) });
+        p._tmpName = null; // 标记失败，第二步跳过
+      }
+    }
+    statusExec.textContent = `第一步完成，正在执行最终重命名…`;
+  }
+
+  // 第二步：改成目标名（一步法直接执行，两步法从临时名改）
   for (const p of pairs) {
     if (p.conflict && skipConflicts) {
       results.push({ ...p, status: 'skipped', error: '跳过冲突项' });
@@ -392,32 +438,17 @@ async function executeRename(skipConflicts) {
       results.push({ ...p, status: 'noop' });
       continue;
     }
-    try {
-      // 优先尝试 FileSystemFileHandle.move()
-      if (typeof p.handle.move === 'function') {
-        try {
-          await p.handle.move(p.newName);
-          results.push({ ...p, status: 'ok' });
-          continue;
-        } catch (e) {
-          // move 失败（含不支持），尝试回退路径
-          if (e && e.name === 'TypeError' && /move is not a function/i.test(e.message || '')) {
-            // 走回退
-          } else if (e && (e.name === 'AbortError' || e.name === 'NotAllowedError')) {
-            throw e; // 用户取消或权限不足，不回退
-          }
-          // 其它错误也尝试回退（例如某些 Chrome 版本 move 不可用）
-        }
+    if (useTwoStep && !p._tmpName) {
+      // 第一步失败的跳过
+      if (!results.find(r => r.oldName === p.oldName)) {
+        results.push({ ...p, status: 'error', error: '临时重命名失败' });
       }
-      // 回退：在 A 目录创建新文件 + 写入 + 删旧文件
-      const file = await p.handle.getFile();
-      const buf = await file.arrayBuffer();
-      const newHandle = await aDir.getFileHandle(p.newName, { create: true });
-      const writable = await newHandle.createWritable();
-      await writable.write(buf);
-      await writable.close();
-      await aDir.removeEntry(p.oldName);
-      results.push({ ...p, status: 'ok-fallback' });
+      continue;
+    }
+    try {
+      const fromName = useTwoStep ? p._tmpName : p.oldName;
+      const res = await renameOne(p.handle, fromName, p.newName, aDir);
+      results.push({ ...p, status: res.status });
     } catch (e) {
       results.push({ ...p, status: 'error', error: e.message || String(e) });
     }

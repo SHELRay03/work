@@ -9,6 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="style.css?v=14" />
+  <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.min.js"></script>
 </head>
 <body>
   <div class="bg-layer" aria-hidden="true"></div>
@@ -34,32 +35,39 @@
 
   <main class="hud-main">
     <h1 class="page-title">语种重组</h1>
-    <p class="page-sub">将按「类别」组织的外包内容，重组为按「语种」组织的输出。大文件推荐 ZIP 模式（ZIP 进 → 服务器重组 → ZIP 下载）。</p>
+    <p class="page-sub">将按「类别」组织的外包内容，重组为按「语种」组织的输出。纯前端运行，无需后端，可直接部署到 GitHub Pages。</p>
 
     <section class="panel">
       <div class="panel-head"><span class="panel-dot"></span><h2>ZIP 快速重组（推荐 · 大文件）</h2></div>
-      <p class="panel-sub">把整个剧文件夹压缩为 ZIP 上传（顶层为剧名文件夹，或直接是各类别文件夹）。服务器流式重组后返回结果 ZIP，速度远快于逐文件复制。需先运行 start.bat 启动后端，并通过 http://127.0.0.1:8000/reorganize 打开本页。</p>
+      <p class="panel-sub">
+        拖入或上传 ZIP 压缩包，自动在浏览器内完成解压、重组、打包与下载，无需选择文件夹权限。
+        若 ZIP 含大视频导致内存不足，建议改用下方「文件夹模式」。
+      </p>
       <div class="drop-zone" id="zipDrop">
         <div class="dz-inner">
-          <div class="dz-icon">🗜️</div>
-          <div id="zipText">点击选择 ZIP 压缩包，或直接拖入</div>
-          <div class="dz-hint">输出为 ZIP 下载，不写入源目录</div>
+          <div class="dz-icon">📦</div>
+          <div id="zipText">点击上传 ZIP 压缩包，或直接拖入</div>
+          <div class="dz-hint">仅支持 .zip；中文文件名自动识别 UTF-8 / GBK 编码</div>
         </div>
       </div>
-      <input type="file" id="zipInput" accept=".zip" hidden />
-      <div class="actions">
-        <label style="display:inline-flex;align-items:center;gap:.4rem;font-size:.88rem">剧名（可选）：<input type="text" id="zipShowName" class="folder-name-input" placeholder="默认取顶层文件夹名" style="width:14rem" /></label>
-        <button type="button" id="btnZipRun" class="btn-primary" disabled>开始重组并下载</button>
+      <input type="file" id="zipFileInput" accept=".zip" hidden />
+      <div style="margin-top:0.6rem;display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+        <label style="font-size:0.82rem;color:var(--text,#2d3a33)">剧名（可选）：</label>
+        <input type="text" id="zipShowName" placeholder="默认取 ZIP 顶层文件夹名"
+          style="flex:1;min-width:12rem;padding:0.4rem 0.6rem;border:1px solid var(--line,#dde5df);border-radius:6px;background:var(--bg,#fff);color:var(--text,#2d3a33)" />
       </div>
-      <div class="progress-box" id="zipProg" hidden>
-        <div class="progress-head"><span id="zipStage">上传中…</span><span id="zipPct" class="progress-count">0%</span></div>
-        <div class="progress-bar"><div id="zipFill" class="progress-fill"></div></div>
+      <div class="status" id="zipStatus"></div>
+      <div class="progress-box" id="zipProgressBox" hidden>
+        <div class="progress-head">
+          <span id="zipProgressStage">准备中…</span>
+        </div>
+        <div class="progress-bar"><div id="zipProgressFill" class="progress-fill"></div></div>
+        <div id="zipProgressFile" class="progress-file"></div>
       </div>
-      <div class="status" id="statusZip"></div>
     </section>
 
     <section class="panel">
-      <div class="panel-head"><span class="panel-dot"></span><h2>文件夹重组（备用 · 逐文件复制）</h2></div>
+      <div class="panel-head"><span class="panel-dot"></span><h2>1. 选择源根目录</h2></div>
       <p class="panel-sub">
         源目录需包含带「旁白/压制/原剧/字幕/净版」字样的子文件夹，其中旁白/压制/字幕下按语种代码（de/en/es…）分子文件夹。
         英语(en)为基准语言，其余语种各产出一个输出文件夹。
@@ -198,6 +206,7 @@
 }
 </style>
 
+<script src="utils.js"></script>
 <script>
 // =============================================================
 // 语种重组模块 — 独立页面
@@ -241,112 +250,6 @@ if (!window.showDirectoryPicker) {
   statusPick.className = 'status err';
   statusPick.textContent = '请使用 Chrome/Edge 浏览器，需要 File System Access API 支持。';
 }
-
-// ------- ZIP 快速重组 -------
-const zipDrop   = document.getElementById('zipDrop');
-const zipText   = document.getElementById('zipText');
-const zipInput  = document.getElementById('zipInput');
-const zipShowName = document.getElementById('zipShowName');
-const btnZipRun = document.getElementById('btnZipRun');
-const statusZip = document.getElementById('statusZip');
-const zipProg   = document.getElementById('zipProg');
-const zipStage  = document.getElementById('zipStage');
-const zipPct    = document.getElementById('zipPct');
-const zipFill   = document.getElementById('zipFill');
-let zipFile = null;
-
-function setZipFile(f) {
-  if (!f) return;
-  if (!/\.zip$/i.test(f.name)) {
-    statusZip.className = 'status err';
-    statusZip.textContent = '请选择 .zip 压缩包';
-    return;
-  }
-  zipFile = f;
-  zipText.innerHTML = `已选择：<b>${escapeHtml(f.name)}</b>（${(f.size / 1048576).toFixed(1)} MB）`;
-  btnZipRun.disabled = false;
-  statusZip.className = 'status';
-  statusZip.textContent = '点击「开始重组并下载」';
-}
-
-zipDrop.addEventListener('click', () => zipInput.click());
-zipInput.addEventListener('change', () => setZipFile(zipInput.files[0]));
-['dragenter', 'dragover'].forEach(ev => zipDrop.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); zipDrop.classList.add('dz-hover'); }));
-['dragleave', 'drop'].forEach(ev => zipDrop.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); zipDrop.classList.remove('dz-hover'); }));
-zipDrop.addEventListener('drop', e => {
-  const f = e.dataTransfer?.files?.[0];
-  if (f) setZipFile(f);
-});
-
-btnZipRun.addEventListener('click', () => {
-  if (!zipFile) return;
-  btnZipRun.disabled = true;
-  zipProg.hidden = false;
-  zipStage.textContent = '上传中…';
-  zipPct.textContent = '0%';
-  zipFill.style.width = '0%';
-  zipFill.classList.remove('indeterminate');
-  statusZip.className = 'status';
-  statusZip.textContent = '上传并重组中，请勿关闭页面…';
-
-  const fd = new FormData();
-  fd.append('subtitles', zipFile, zipFile.name);
-  const sn = zipShowName.value.trim();
-  if (sn) fd.append('show_name', sn);
-
-  const xhr = new XMLHttpRequest();
-  xhr.open('POST', '/api/reorganize');
-  xhr.responseType = 'blob';
-  xhr.upload.onprogress = (e) => {
-    if (e.lengthComputable) {
-      const pct = Math.round(e.loaded / e.total * 100);
-      zipPct.textContent = pct + '%';
-      zipFill.style.width = pct + '%';
-      if (pct >= 100) zipStage.textContent = '服务器重组中…';
-    }
-  };
-  xhr.onload = () => {
-    zipProg.hidden = true;
-    if (xhr.status === 200) {
-      const blob = xhr.response;
-      let outName = `${zipShowName.value.trim() || zipFile.name.replace(/\.zip$/i, '')}_重组.zip`;
-      try {
-        const show = xhr.getResponseHeader('X-Reorg-Show');
-        if (show) outName = `${decodeURIComponent(show)}_重组.zip`;
-      } catch (_) {}
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = outName;
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
-      let warn = '';
-      try {
-        const w = xhr.getResponseHeader('X-Reorg-Warnings');
-        if (w && decodeURIComponent(w)) warn = '（警告：' + decodeURIComponent(w) + '）';
-      } catch (_) {}
-      statusZip.className = 'status ok';
-      statusZip.textContent = `完成：${outName}（${(blob.size / 1048576).toFixed(1)} MB）已开始下载${warn}，详情见包内「重组报告.txt」`;
-    } else {
-      const b = xhr.response;
-      const done = (msg) => {
-        statusZip.className = 'status err';
-        statusZip.textContent = `失败：${msg || ('HTTP ' + xhr.status)}`;
-        btnZipRun.disabled = false;
-      };
-      if (b && b.text) b.text().then(t => done(t.slice(0, 300))).catch(() => done(''));
-      else done('');
-      return;
-    }
-    btnZipRun.disabled = false;
-  };
-  xhr.onerror = () => {
-    zipProg.hidden = true;
-    btnZipRun.disabled = false;
-    statusZip.className = 'status err';
-    statusZip.textContent = '无法连接后端。请先运行项目根目录的 start.bat 启动服务，然后通过 http://127.0.0.1:8000/reorganize 打开本页再使用 ZIP 模式。';
-  };
-  xhr.send(fd);
-});
 
 // ------- 选择根目录 -------
 async function useRootHandle(handle) {
@@ -865,10 +768,314 @@ btnReScan.addEventListener('click', () => {
   statusPick.textContent = '';
 });
 
-// ------- 工具 -------
-function escapeHtml(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+// =============================================================
+// ZIP 快速重组（纯前端，使用 fflate 解压/打包）
+// 复用 LANG_FULL / LANG_CHAR / BASE_LANG / CATEGORIES / outputSubFolders
+// =============================================================
+const zipDrop          = document.getElementById('zipDrop');
+const zipFileInput     = document.getElementById('zipFileInput');
+const zipShowNameInput = document.getElementById('zipShowName');
+const zipStatus        = document.getElementById('zipStatus');
+const zipProgressBox   = document.getElementById('zipProgressBox');
+const zipProgressStage = document.getElementById('zipProgressStage');
+const zipProgressFill  = document.getElementById('zipProgressFill');
+const zipProgressFile  = document.getElementById('zipProgressFile');
+
+// CP437 字符表：用于中文 ZIP 文件名（GBK 编码、未设 UTF-8 标志）的恢复
+// fflate 在无 UTF-8 标志时按 CP437 解码，需反向映射回原始字节再用 GBK 解码
+const CP437 = '\x00☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕‼¶§▬↨↑↓→←∟↔▲▼ !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~⌂ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬δ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■ ';
+const CP437_REV = new Map();
+for (let i = 0; i < CP437.length; i++) CP437_REV.set(CP437[i], i);
+
+// 解码 ZIP 文件名：已是中文直接返回；否则尝试 CP437→字节→GBK 恢复
+function decodeZipName(name) {
+  if (!name) return name;
+  if (/[\u4e00-\u9fff\u3400-\u4dbf\uff00-\uffef]/.test(name)) return name;
+  try {
+    const bytes = [];
+    for (const ch of name) {
+      const b = CP437_REV.get(ch);
+      if (b === undefined) return name; // 含无法映射字符，放弃恢复
+      bytes.push(b);
+    }
+    const gbk = new TextDecoder('gbk').decode(new Uint8Array(bytes));
+    if (/[\u4e00-\u9fff]/.test(gbk)) return gbk;
+  } catch (e) { /* ignore */ }
+  return name;
 }
+
+// 扫描 ZIP 条目，按 scanSource 相同逻辑分类
+// entries: { [path]: Uint8Array }
+// 返回: { catMap, allLangs, targetLangs, xlsxFile }
+function scanZipEntries(entries) {
+  const catMap = {}; // id -> { name, files: { [relPath]: Uint8Array } }
+  const langSet = new Set();
+  let xlsxFile = null;
+
+  for (const [rawPath, data] of Object.entries(entries)) {
+    // 跳过目录条目（路径以 / 结尾）
+    if (rawPath.endsWith('/')) continue;
+    const path = decodeZipName(rawPath);
+    const parts = path.split('/').filter(Boolean);
+    if (parts.length === 0) continue;
+
+    const topName = parts[0];
+    const cat = CATEGORIES.find(c => topName.includes(c.key));
+
+    // 查找第一个 .xlsx（任意位置）
+    const fileName = parts[parts.length - 1];
+    if (!xlsxFile && /\.xlsx$/i.test(fileName)) {
+      xlsxFile = { name: fileName, data };
+    }
+
+    if (!cat) continue; // 不在类别文件夹内
+
+    if (!catMap[cat.id]) catMap[cat.id] = { name: topName, files: {} };
+
+    // VO/DUB/SUB 下第二层为语种子文件夹
+    if (['VO', 'DUB', 'SUB'].includes(cat.id) && parts.length >= 2) {
+      const langCode = parts[1];
+      if (LANG_FULL[langCode]) langSet.add(langCode);
+    }
+
+    // 以类别文件夹为根的相对路径
+    const relPath = parts.slice(1).join('/');
+    if (relPath) catMap[cat.id].files[relPath] = data;
+  }
+
+  const allLangs = Array.from(langSet).sort();
+  const targetLangs = allLangs.filter(l => l !== BASE_LANG);
+  return { catMap, allLangs, targetLangs, xlsxFile };
+}
+
+// 检测剧名：用户输入优先；否则若所有文件在同一顶层目录取该目录名；否则「重组输出」
+function detectShowName(entries, userInput) {
+  if (userInput && userInput.trim()) return userInput.trim();
+  const topDirs = new Set();
+  for (const rawPath of Object.keys(entries)) {
+    if (rawPath.endsWith('/')) continue;
+    const path = decodeZipName(rawPath);
+    const parts = path.split('/').filter(Boolean);
+    if (parts.length > 1) topDirs.add(parts[0]);
+  }
+  if (topDirs.size === 1) return [...topDirs][0];
+  return '重组输出';
+}
+
+// 重组 ZIP 条目到输出结构（与文件夹模式一致）
+// 返回: { output: { [path]: Uint8Array }, report, src }
+function reorganizeZipEntries(entries, showName) {
+  const src = scanZipEntries(entries);
+  if (src.targetLangs.length === 0) {
+    throw new Error('未找到除英语(en)外的其他语种，无法重组');
+  }
+
+  const output = {}; // { [outputPath]: Uint8Array }
+  const report = [];
+
+  for (const lang of src.targetLangs) {
+    const fullName = LANG_FULL[lang];
+    const outputName = `${fullName} ${showName}`;
+    const subs = outputSubFolders(lang);
+    const langReport = { outputName, items: [] };
+
+    for (const sub of subs) {
+      const cat = src.catMap[sub.id];
+      if (!cat) {
+        langReport.items.push({ target: sub.name, ok: false, error: '源类别文件夹缺失' });
+        continue;
+      }
+
+      let fileCount = 0;
+      if (sub.srcLangs[0] === '*') {
+        // 原剧 / 净版：复制类别全部内容
+        for (const [relPath, data] of Object.entries(cat.files)) {
+          output[`${outputName}/${sub.name}/${relPath}`] = data;
+          fileCount++;
+        }
+        langReport.items.push({ target: sub.name, ok: true, count: fileCount });
+      } else {
+        // 字幕 / 旁白 / 压制：按指定语种子文件夹复制，保留语种目录结构
+        const missing = [];
+        for (const sl of sub.srcLangs) {
+          const prefix = sl + '/';
+          let found = false;
+          for (const [relPath, data] of Object.entries(cat.files)) {
+            if (relPath === sl || relPath.startsWith(prefix)) {
+              const inner = relPath === sl ? '' : relPath.slice(prefix.length);
+              const outPath = `${outputName}/${sub.name}/${sl}${inner ? '/' + inner : ''}`;
+              output[outPath] = data;
+              fileCount++;
+              found = true;
+            }
+          }
+          if (!found) missing.push(sl);
+        }
+        if (missing.length > 0) {
+          langReport.items.push({ target: sub.name, ok: false, error: `缺失语种文件夹: ${missing.join(', ')}`, count: fileCount });
+        } else {
+          langReport.items.push({ target: sub.name, ok: true, count: fileCount });
+        }
+      }
+    }
+
+    // 本地化清单.xlsx
+    if (src.xlsxFile) {
+      output[`${outputName}/本地化清单.xlsx`] = src.xlsxFile.data;
+      langReport.items.push({ target: '本地化清单.xlsx', ok: true, count: 1 });
+    } else {
+      langReport.items.push({ target: '本地化清单.xlsx', ok: false, error: '未找到 xlsx 文件' });
+    }
+
+    report.push(langReport);
+  }
+
+  // 生成「重组报告.txt」
+  let reportText = `重组报告 - ${showName}\n`;
+  reportText += `生成时间: ${new Date().toLocaleString()}\n`;
+  reportText += `基准语种: ${LANG_FULL[BASE_LANG]} (${BASE_LANG})\n`;
+  reportText += `目标语种: ${src.targetLangs.map(l => `${LANG_FULL[l]}(${l})`).join(', ')}\n`;
+  reportText += `${'='.repeat(50)}\n\n`;
+  for (const lr of report) {
+    reportText += `【${lr.outputName}】\n`;
+    for (const item of lr.items) {
+      if (item.ok) {
+        reportText += `  ✓ ${item.target}：${item.count} 个文件\n`;
+      } else {
+        reportText += `  ✗ ${item.target}：${item.error}${item.count ? '（已复制 ' + item.count + ' 个）' : ''}\n`;
+      }
+    }
+    reportText += '\n';
+  }
+  output['重组报告.txt'] = new TextEncoder().encode(reportText);
+
+  return { output, report, src };
+}
+
+// 触发浏览器下载
+function triggerZipDownload(data, filename) {
+  const blob = new Blob([data], { type: 'application/zip' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+// 更新 ZIP 进度 UI
+function setZipProgress(stage, file, percent) {
+  zipProgressStage.textContent = stage;
+  zipProgressFile.textContent = file || '';
+  if (percent !== undefined) {
+    zipProgressFill.classList.remove('indeterminate');
+    zipProgressFill.style.width = percent + '%';
+  } else {
+    zipProgressFill.classList.add('indeterminate');
+    zipProgressFill.style.width = '';
+  }
+}
+
+// 主流程：上传 → 解压 → 重组 → 打包 → 下载
+async function handleZipFile(file) {
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith('.zip')) {
+    zipStatus.className = 'status err';
+    zipStatus.textContent = '请上传 .zip 格式的压缩包';
+    return;
+  }
+  if (typeof fflate === 'undefined') {
+    zipStatus.className = 'status err';
+    zipStatus.textContent = 'fflate 库加载失败，请检查网络连接后刷新页面';
+    return;
+  }
+
+  const sizeMB = file.size / (1024 * 1024);
+  if (sizeMB > 500) {
+    zipStatus.className = 'status';
+    zipStatus.textContent = `⚠ ZIP 体积较大（${sizeMB.toFixed(1)} MB），含大视频时可能内存不足，建议改用文件夹模式。仍将尝试处理…`;
+  } else {
+    zipStatus.className = 'status';
+    zipStatus.textContent = '';
+  }
+
+  zipProgressBox.hidden = false;
+  setZipProgress('读取 ZIP 中…', file.name);
+
+  try {
+    const buf = new Uint8Array(await file.arrayBuffer());
+
+    // 1. 解压
+    setZipProgress('解压中…', '正在解析 ZIP 条目');
+    const entries = await new Promise((resolve, reject) => {
+      fflate.unzip(buf, (err, result) => {
+        if (err) reject(err);
+        else resolve(result);
+      });
+    });
+
+    if (!entries || Object.keys(entries).length === 0) {
+      throw new Error('ZIP 解压后为空，或无法识别其中内容');
+    }
+
+    // 2. 剧名
+    const showName = detectShowName(entries, zipShowNameInput.value);
+
+    // 3. 重组
+    setZipProgress('重组中…', '分类并合并各语种文件');
+    const { output, src } = reorganizeZipEntries(entries, showName);
+    const totalFiles = Object.keys(output).length;
+    setZipProgress(`重组完成（${src.targetLangs.length} 个语种 / ${totalFiles} 个文件），打包中…`, '');
+
+    // 4. 打包（ZIP_STORED，不压缩，level:0）
+    const zipped = await new Promise((resolve, reject) => {
+      fflate.zip(output, { level: 0 }, (err, data) => {
+        if (err) reject(err);
+        else resolve(data);
+      });
+    });
+
+    // 5. 下载
+    const outName = `${showName}_重组.zip`;
+    setZipProgress('下载中…', outName);
+    triggerZipDownload(zipped, outName);
+
+    setZipProgress('完成', `${outName} 已开始下载`, 100);
+    zipStatus.className = 'status ok';
+    zipStatus.textContent = `✓ 重组完成，共 ${src.targetLangs.length} 个语种，输出 ${totalFiles} 个文件`;
+  } catch (e) {
+    zipProgressBox.hidden = true;
+    zipStatus.className = 'status err';
+    zipStatus.textContent = '处理失败：' + e.message;
+  }
+}
+
+// ZIP 面板事件绑定
+zipDrop.addEventListener('click', () => zipFileInput.click());
+zipFileInput.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (file) handleZipFile(file);
+  e.target.value = '';
+});
+
+['dragenter', 'dragover'].forEach(evt => {
+  zipDrop.addEventListener(evt, (e) => {
+    e.preventDefault(); e.stopPropagation();
+    zipDrop.classList.add('dz-hover');
+  });
+});
+['dragleave', 'drop'].forEach(evt => {
+  zipDrop.addEventListener(evt, (e) => {
+    e.preventDefault(); e.stopPropagation();
+    zipDrop.classList.remove('dz-hover');
+  });
+});
+zipDrop.addEventListener('drop', (e) => {
+  const file = e.dataTransfer?.files?.[0];
+  if (file) handleZipFile(file);
+});
 </script>
 </body>
 </html>

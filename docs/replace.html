@@ -128,7 +128,7 @@
       <div class="context-modal-body" id="contextBody"></div>
     </div>
   </div>
-  <script src="srt.js?v=10"></script>
+  <script src="srt.js?v=11"></script>
   <script>
     let scanData = null;
     let selectedIds = new Set();
@@ -716,81 +716,23 @@
         glossaryEntries = glossResult.entries;
         multiTargetMap = glossResult.multiTargetMap || {};
         hitTargetOverrides = {};
-        allSubsByFile = {};
 
         await loadSubtitleFiles();
 
-        const terms = {};
-        let totalHits = 0;
-
-        const limit = preview.checked ? 1 : subtitleFiles.length;
-
-        for (let i = 0; i < limit; i++) {
-          const subFile = subtitleFiles[i];
-          const subs = parseSrt(subFile.content);
-          const outName = subFile.name.split('/').pop();
-          allSubsByFile[outName] = subs;
-
-          for (let j = 0; j < subs.length; j++) {
-            const line = subs[j];
-            if (!line.text || !line.text.trim()) continue;
-
-            const text = line.text.replace(/\n/g, ' ');
-            const { hits } = scanTextHits(text, glossaryEntries);
-
-            const tc = formatTimecode(line.start);
-
-            // 准备上下文（前后各 2 行）
-            const ctxBefore = [];
-            for (let k = Math.max(0, j - 2); k < j; k++) {
-              ctxBefore.push({
-                line_no: k + 1,
-                timecode: formatTimecode(subs[k].start),
-                text: (subs[k].text || '').replace(/\n/g, ' ')
-              });
-            }
-            const ctxAfter = [];
-            for (let k = j + 1; k < Math.min(subs.length, j + 3); k++) {
-              ctxAfter.push({
-                line_no: k + 1,
-                timecode: formatTimecode(subs[k].start),
-                text: (subs[k].text || '').replace(/\n/g, ' ')
-              });
-            }
-
-            for (const h of hits) {
-              const src = h.source;
-              const bucket = terms[src] || { source: src, target: h.target, hits: [] };
-
-              bucket.hits.push({
-                id: `${outName}|${j + 1}|${h.start}|${h.end}|${src}`,
-                file: outName,
-                line_no: j + 1,
-                timecode: tc,
-                line_text: text,
-                source: h.source,
-                target: h.target,
-                start: h.start,
-                end: h.end,
-                context: { before: ctxBefore, after: ctxAfter }
-              });
-
-              totalHits++;
-              terms[src] = bucket;
-            }
-          }
-        }
-
-        const termList = Object.values(terms).sort((a, b) => {
-          if (b.hits.length !== a.hits.length) return b.hits.length - a.hits.length;
-          return b.source.length - a.source.length;
+        // 用 Web Worker 扫描，避免主线程卡顿
+        const result = await runScanWorker({
+          type: 'scan',
+          subtitleFiles,
+          glossaryEntries,
+          preview: preview.checked,
+          onProgress: (cur, total) => { statusScan.textContent = `扫描中… ${cur}/${total}`; }
         });
 
         scanData = {
           sheet_name: glossResult.sheetName,
-          term_count: termList.length,
-          hit_count: totalHits,
-          terms: termList
+          term_count: result.term_count,
+          hit_count: result.hit_count,
+          terms: result.terms
         };
 
         selectedIds = new Set(allHitIds());
@@ -817,6 +759,31 @@
       }
     };
 
+    // Web Worker 封装：返回 Promise，支持进度回调
+    // type: 'scan'（单语言）或 'scan-multi'（多语言）
+    function runScanWorker({ type, subtitleFiles, glossaryEntries, glossaryByLang, activeLangs, preview, onProgress }) {
+      return new Promise((resolve, reject) => {
+        const worker = new Worker('scan-worker.js');
+        worker.onmessage = (e) => {
+          const msg = e.data;
+          if (msg.type === 'progress') {
+            onProgress && onProgress(msg.current, msg.total);
+          } else if (msg.type === 'result') {
+            worker.terminate();
+            resolve(msg.scanData);
+          } else if (msg.type === 'error') {
+            worker.terminate();
+            reject(new Error(msg.message));
+          }
+        };
+        worker.onerror = (e) => {
+          worker.terminate();
+          reject(new Error(e.message || 'Worker 错误'));
+        };
+        worker.postMessage({ type, subtitleFiles, glossaryEntries, glossaryByLang, activeLangs, preview });
+      });
+    }
+
     // ===== 多语言模式：扫描 / 渲染 / 替换 =====
     async function scanMultiLanguage() {
       statusScan.className = 'status';
@@ -840,93 +807,35 @@
         activeLangs.forEach(l => { langHitValue[l] = {}; });
 
         hitTargetOverrides = {};
-        allSubsByFile = {};
 
         await loadSubtitleFiles();
 
-        const terms = {};
-        let totalHits = 0;
-        const limit = preview.checked ? 1 : subtitleFiles.length;
+        // 用 Web Worker 扫描（多语言模式）
+        const result = await runScanWorker({
+          type: 'scan-multi',
+          subtitleFiles,
+          glossaryByLang,
+          activeLangs,
+          preview: preview.checked,
+          onProgress: (cur, total) => { statusScan.textContent = `扫描中… ${cur}/${total}`; }
+        });
 
-        for (let i = 0; i < limit; i++) {
-          const subFile = subtitleFiles[i];
-          const subs = parseSrt(subFile.content);
-          const outName = subFile.name.split('/').pop();
-          allSubsByFile[outName] = subs;
-
-          for (let j = 0; j < subs.length; j++) {
-            const line = subs[j];
-            if (!line.text || !line.text.trim()) continue;
-
-            const text = line.text.replace(/\n/g, ' ');
-            const tc = formatTimecode(line.start);
-
-            const ctxBefore = [];
-            for (let k = Math.max(0, j - 2); k < j; k++) {
-              ctxBefore.push({
-                line_no: k + 1,
-                timecode: formatTimecode(subs[k].start),
-                text: (subs[k].text || '').replace(/\n/g, ' ')
-              });
-            }
-            const ctxAfter = [];
-            for (let k = j + 1; k < Math.min(subs.length, j + 3); k++) {
-              ctxAfter.push({
-                line_no: k + 1,
-                timecode: formatTimecode(subs[k].start),
-                text: (subs[k].text || '').replace(/\n/g, ' ')
-              });
-            }
-
-            // 每语言独立扫描，按 hitId 合并
-            const mergedHits = {};
+        // 初始化 langHitValue：默认值 = glossary target
+        for (const term of result.terms) {
+          for (const h of term.hits) {
             for (const lang of activeLangs) {
-              const { hits } = scanTextHits(text, glossaryByLang[lang]);
-              for (const h of hits) {
-                const id = `${outName}|${j + 1}|${h.start}|${h.end}|${h.source}`;
-                if (!mergedHits[id]) {
-                  mergedHits[id] = {
-                    id,
-                    file: outName,
-                    line_no: j + 1,
-                    timecode: tc,
-                    line_text: text,
-                    source: h.source,
-                    start: h.start,
-                    end: h.end,
-                    context: { before: ctxBefore, after: ctxAfter },
-                    targets: {}
-                  };
-                }
-                mergedHits[id].targets[lang] = h.target;
-                // 初始化 langHitValue：默认值 = glossary target
-                if (!(id in langHitValue[lang])) {
-                  langHitValue[lang][id] = h.target;
-                }
+              if (h.targets && h.targets[lang] !== undefined) {
+                langHitValue[lang][h.id] = h.targets[lang];
               }
-            }
-
-            // 把合并后的 hit 按 source 聚合
-            for (const h of Object.values(mergedHits)) {
-              const src = h.source;
-              const bucket = terms[src] || { source: src, hits: [] };
-              bucket.hits.push(h);
-              totalHits++;
-              terms[src] = bucket;
             }
           }
         }
 
-        const termList = Object.values(terms).sort((a, b) => {
-          if (b.hits.length !== a.hits.length) return b.hits.length - a.hits.length;
-          return b.source.length - a.source.length;
-        });
-
         scanData = {
           sheet_name: glossaryFiles.map(g => g.file.name).join(' + '),
-          term_count: termList.length,
-          hit_count: totalHits,
-          terms: termList
+          term_count: result.term_count,
+          hit_count: result.hit_count,
+          terms: result.terms
         };
 
         selectedIds = new Set(allHitIds());

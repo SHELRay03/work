@@ -75,6 +75,7 @@
     </section>
   </main>
   <script src="srt.js?v=10"></script>
+  <script src="utils.js"></script>
   <script>
     const btnFix = document.getElementById('btnFix');
     const statusFix = document.getElementById('statusFix');
@@ -1073,9 +1074,6 @@
         + safe.slice(start + len);
     }
 
-    function escapeHtml(s) {
-      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    }
     function escapeHtmlAttr(s) {
       return escapeHtml(s).replace(/"/g, '&quot;');
     }

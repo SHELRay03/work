@@ -255,6 +255,7 @@
   </div>
 
   <script src="srt.js?v=8"></script>
+  <script src="utils.js"></script>
   <script>
     let sourceType = null;
     let subtitleFiles = [];
@@ -471,13 +472,6 @@
 
     function getDisplayTarget(c) {
       return c.target || c.aiTarget || '';
-    }
-
-    // HTML 转义，防止 XSS
-    function escapeHtml(text) {
-      const div = document.createElement('div');
-      div.textContent = text;
-      return div.innerHTML;
     }
 
     function renderAll(list) {

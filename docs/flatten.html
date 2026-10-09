@@ -61,6 +61,7 @@
     </section>
   </main>
 
+<script src="utils.js"></script>
 <script>
 // =============================================================
 // 目录平铺 — 独立页面（多根目录版）
@@ -425,10 +426,6 @@ function appendReportCard(root, result, errMsg) {
   reportContent.appendChild(card);
 }
 
-// ------- 工具函数 -------
-function escapeHtml(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
 </script>
 <style>
 /* 多根目录卡片 */
