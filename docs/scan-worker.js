@@ -2,7 +2,8 @@
  * 术语扫描 Web Worker
  * 将 parseSrt + scanTextHits 移到后台线程，避免主线程卡顿
  */
-importScripts('srt.js?v=11');
+importScripts('srt-core.js?v=12');
+importScripts('replace-engine.js?v=12');
 
 self.onmessage = function (e) {
   const { type, subtitleFiles, glossaryEntries, glossaryByLang, activeLangs, preview } = e.data;

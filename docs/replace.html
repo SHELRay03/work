@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="style.css?v=17" />
+  <link rel="stylesheet" href="style.css?v=19" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
@@ -129,7 +129,9 @@
       <div class="context-modal-body" id="contextBody"></div>
     </div>
   </div>
-  <script src="srt.js?v=11"></script>
+  <script src="srt-core.js?v=12"></script>
+  <script src="replace-engine.js?v=12"></script>
+  <script src="utils.js?v=13"></script>
   <script>
     let scanData = null;
     let selectedIds = new Set();
@@ -340,7 +342,7 @@
       try {
         droppedSrtFiles = await extractSrtFromDropEvent(e);
         if (droppedSrtFiles.length === 0) {
-          alert('拖入的内容中未找到 SRT 文件');
+          showToast('拖入的内容中未找到 SRT 文件', 'warning');
           sourceType = null;
           droppedSrtFiles = [];
         } else {
@@ -348,7 +350,7 @@
           statusScan.textContent = `已识别 ${droppedSrtFiles.length} 个 SRT 文件，请点击"扫描替换位置"`;
         }
       } catch (err) {
-        alert('读取拖入内容失败：' + err.message);
+        showToast('读取拖入内容失败：' + err.message, 'error');
         sourceType = null;
         droppedSrtFiles = [];
       }
@@ -694,8 +696,8 @@
     }
 
     btnScan.onclick = async () => {
-      if (glossaryFiles.length === 0) return alert('请上传本地化清单');
-      if (!sourceType) return alert('请上传或拖入字幕文件夹');
+      if (glossaryFiles.length === 0) return showToast('请上传本地化清单', 'warning');
+      if (!sourceType) return showToast('请上传或拖入字幕文件夹', 'warning');
 
       // 多语言模式判定：≥2 份术语表且至少 2 个不同语言
       const langs = getActiveLangs();
@@ -708,7 +710,7 @@
       }
 
       const g = glossaryFiles[0]?.file;
-      statusScan.className = 'status';
+      statusScan.className = 'status loading';
       statusScan.textContent = '扫描中…';
       btnScan.disabled = true;
 
@@ -787,7 +789,7 @@
 
     // ===== 多语言模式：扫描 / 渲染 / 替换 =====
     async function scanMultiLanguage() {
-      statusScan.className = 'status';
+      statusScan.className = 'status loading';
       statusScan.textContent = '扫描中…';
       btnScan.disabled = true;
       try {
@@ -1061,14 +1063,14 @@
     // 单个术语表单独导出到用户选择的文件夹（文件直接放在所选文件夹根下）
     async function exportSingleGlossary(gi, btn) {
       const g = glossaryFiles[gi];
-      if (!sourceType || subtitleFiles.length === 0) return alert('请先扫描字幕');
-      if (scanData && selectedIds.size === 0) return alert('请至少勾选一处替换');
-      if (!window.showDirectoryPicker) return alert('当前浏览器不支持文件夹导出，请使用 Chrome/Edge');
+      if (!sourceType || subtitleFiles.length === 0) return showToast('请先扫描字幕', 'warning');
+      if (scanData && selectedIds.size === 0) return showToast('请至少勾选一处替换', 'warning');
+      if (!window.showDirectoryPicker) return showToast('当前浏览器不支持文件夹导出，请使用 Chrome/Edge', 'error');
 
       btn.disabled = true;
       const oldText = btn.textContent;
       btn.textContent = '替换中…';
-      statusReplace.className = 'status';
+      statusReplace.className = 'status loading';
       statusReplace.textContent = `正在生成「${g.file.name}」替换结果…`;
 
       try {
@@ -1099,7 +1101,7 @@
     }
 
     async function replaceAllGlossaries() {
-      statusReplace.className = 'status';
+      statusReplace.className = 'status loading';
       statusReplace.textContent = '替换中…';
       btnReplace.disabled = true;
 
@@ -1156,17 +1158,17 @@
 
     btnReplace.onclick = async () => {
       if (multiLangMode) {
-        if (glossaryFiles.length === 0) return alert('请上传本地化清单');
-        if (!sourceType || subtitleFiles.length === 0) return alert('请先扫描字幕');
-        if (scanData && selectedIds.size === 0) return alert('请至少勾选一处替换');
+        if (glossaryFiles.length === 0) return showToast('请上传本地化清单', 'warning');
+        if (!sourceType || subtitleFiles.length === 0) return showToast('请先扫描字幕', 'warning');
+        if (scanData && selectedIds.size === 0) return showToast('请至少勾选一处替换', 'warning');
         return replaceAllGlossaries();
       }
       const g = glossaryFiles[0]?.file;
-      if (!g) return alert('请上传本地化清单');
-      if (!sourceType || subtitleFiles.length === 0) return alert('请先扫描字幕');
-      if (scanData && selectedIds.size === 0) return alert('请至少勾选一处替换');
+      if (!g) return showToast('请上传本地化清单', 'warning');
+      if (!sourceType || subtitleFiles.length === 0) return showToast('请先扫描字幕', 'warning');
+      if (scanData && selectedIds.size === 0) return showToast('请至少勾选一处替换', 'warning');
       
-      statusReplace.className = 'status';
+      statusReplace.className = 'status loading';
       statusReplace.textContent = '替换中…';
       btnReplace.disabled = true;
       

@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="style.css?v=17" />
+  <link rel="stylesheet" href="style.css?v=19" />
   <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.min.js"></script>
 </head>
 <body>
@@ -232,7 +232,7 @@
 }
 </style>
 
-<script src="utils.js"></script>
+<script src="utils.js?v=13"></script>
 <script>
 // =============================================================
 // 语种重组模块 — 独立页面
@@ -293,7 +293,7 @@ async function useRootHandle(handle) {
   state.rootHandle = handle;
   state.showName = handle.name;
   pickText.innerHTML = `已选择源目录：<b>${escapeHtml(handle.name)}</b>`;
-  statusPick.className = 'status';
+  statusPick.className = 'status loading';
   statusPick.textContent = '扫描源目录结构中…';
   previewPanel.hidden = true;
   reportPanel.hidden = true;
@@ -1020,7 +1020,7 @@ async function handleZipFile(file) {
 
   const sizeMB = file.size / (1024 * 1024);
   if (sizeMB > 500) {
-    zipStatus.className = 'status';
+    zipStatus.className = 'status warn';
     zipStatus.textContent = `⚠ ZIP 体积较大（${sizeMB.toFixed(1)} MB），含大视频时可能内存不足，建议改用文件夹模式。仍将尝试处理…`;
   } else {
     zipStatus.className = 'status';

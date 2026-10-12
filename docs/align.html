@@ -8,10 +8,10 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="style.css?v=17" />
+  <link rel="stylesheet" href="style.css?v=19" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-  <script src="srt.js?v=8"></script>
-  <script src="utils.js"></script>
+  <script src="srt-core.js?v=12"></script>
+  <script src="utils.js?v=13"></script>
 </head>
 <body>
   <div class="bg-layer" aria-hidden="true"></div>
@@ -117,8 +117,8 @@
 <script>
 // =============================================================
 // 跨语言术语对齐 — 独立页面
-// 复用 srt.js 提供的 parseSrt / generateSrt / scanTextHits /
-//             saveFilesToFolder / naturalCompare / extractSrtFromFileList
+// 复用 srt-core.js 提供 parseSrt / generateSrt / naturalCompare / extractSrtFromFileList
+// 复用 utils.js 提供 saveFilesToFolder
 // =============================================================
 
 // ------- 状态 -------
@@ -197,15 +197,15 @@ async function loadSrcFiles(list) {
 // ------- 源术语扫描 -------
 btnScanSrc.addEventListener('click', async () => {
   const term = srcTerm.value.trim();
-  if (!term) return alert('请输入源语言搜索术语');
-  if (state.srcFiles.length === 0) return alert('请先上传源语言 SRT 文件夹');
+  if (!term) return showToast('请输入源语言搜索术语', 'warning');
+  if (state.srcFiles.length === 0) return showToast('请先上传源语言 SRT 文件夹', 'warning');
 
   state.srcTerm = term;
   state.srcLang = srcLang.value;
   state.srcHits = [];
 
   btnScanSrc.disabled = true;
-  statusSrc.className = 'status';
+  statusSrc.className = 'status loading';
   statusSrc.textContent = '扫描中…';
 
   try {
@@ -404,10 +404,10 @@ addTargetRow();
 
 // ------- 对齐扫描 -------
 btnScanAlign.addEventListener('click', async () => {
-  if (state.srcHits.length === 0) return alert('请先扫描源语言术语');
+  if (state.srcHits.length === 0) return showToast('请先扫描源语言术语', 'warning');
 
   btnScanAlign.disabled = true;
-  statusAlign.className = 'status';
+  statusAlign.className = 'status loading';
   statusAlign.textContent = '对齐中…';
 
   try {
@@ -686,7 +686,7 @@ btnDeselectAll.addEventListener('click', () => {
 btnExport.addEventListener('click', async () => {
   const useFolderExport = expFolder.checked;
   btnExport.disabled = true;
-  statusExport.className = 'status';
+  statusExport.className = 'status loading';
   statusExport.textContent = '替换中…';
 
   try {

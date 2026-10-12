@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="style.css?v=17" />
+  <link rel="stylesheet" href="style.css?v=19" />
 </head>
 <body>
   <div class="bg-layer" aria-hidden="true"></div>
@@ -166,7 +166,7 @@
   .file-rename-group h4 { margin: 0 0 0.3rem; font-size: 0.8rem; color: var(--text, #2d3a33); }
 </style>
 
-<script src="utils.js"></script>
+<script src="utils.js?v=13"></script>
 <script>
 // =============================================================
 // 预处理模块 — 独立页面
@@ -226,7 +226,7 @@ async function useRootHandle(handle) {
   state.childDirs = [];
   state.configs = [];
   pickText.innerHTML = `已选择根目录：<b>${escapeHtml(handle.name)}</b>`;
-  statusPick.className = 'status';
+  statusPick.className = 'status loading';
   statusPick.textContent = '扫描子目录中…';
   cfgPanel.hidden = true;
   previewPanel.hidden = true;
@@ -461,7 +461,7 @@ function normalizeFileName(name) {
 btnRefresh.addEventListener('click', async () => {
   if (!state.rootHandle) return;
   btnRefresh.disabled = true;
-  statusCfg.className = 'status';
+  statusCfg.className = 'status loading';
   statusCfg.textContent = '生成预览中…';
   try {
     const plan = await buildPlan(state.rootHandle, state.childDirs, state.configs);

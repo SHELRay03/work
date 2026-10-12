@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="style.css?v=17" />
+  <link rel="stylesheet" href="style.css?v=19" />
 </head>
 <body>
   <div class="bg-layer" aria-hidden="true"></div>
@@ -22,7 +22,7 @@
     <h1 class="page-title">SRT 批量修复</h1>
     <p class="page-sub">统一换行与时间轴，便于导入剪映</p>
     <section class="panel">
-      <div class="panel-head"><span class="panel-dot"></span><h2>功能操作</h2></div>
+      <div class="panel-head"><span class="panel-dot"></span><h2>1. 批量修复</h2></div>
       <p class="card-desc">直接拖入文件夹，任意层级子文件夹中的 .srt 都会被识别。</p>
       <div class="field">
         <label>字幕（直接拖入文件夹）</label>
@@ -54,7 +54,7 @@
     </section>
 
     <section class="panel" id="kwPanel">
-      <div class="panel-head"><span class="panel-dot"></span><h2>关键词删除</h2></div>
+      <div class="panel-head"><span class="panel-dot"></span><h2>2. 关键词删除</h2></div>
       <p class="panel-sub">输入关键词，查找包含该词的字幕条目，勾选后批量删除所选条目及其时间轴并导出。多个关键词用逗号分隔（任一匹配即命中）。</p>
       <div class="kw-bar">
         <input type="text" id="kwInput" class="folder-name-input" placeholder="输入关键词，多个用逗号分隔" />
@@ -67,15 +67,15 @@
     </section>
 
     <section class="panel" id="healthPanel" hidden>
-      <div class="panel-head"><span class="panel-dot"></span><h2>字幕健康检查</h2></div>
+      <div class="panel-head"><span class="panel-dot"></span><h2>3. 字幕健康检查</h2></div>
       <p class="panel-sub">扫描 6 类内部异常：阿拉伯数字、超长时间轴、时间轴倒退、时间轴重叠、空文本、重复块。若已上传模板字幕 B，额外对比 A↔B 时间轴覆盖：A 中缺失（B 有 A 无）、A 中多余（A 有 B 无）。只读，不修改原文件。</p>
       <div class="status" id="statusHealth"></div>
       <div id="healthChips" class="health-chips" hidden></div>
       <div id="healthResult" class="scan-result" hidden></div>
     </section>
   </main>
-  <script src="srt.js?v=10"></script>
-  <script src="utils.js"></script>
+  <script src="srt-core.js?v=12"></script>
+  <script src="utils.js?v=13"></script>
   <script>
     const btnFix = document.getElementById('btnFix');
     const statusFix = document.getElementById('statusFix');
@@ -121,7 +121,7 @@
       try {
         droppedTplFiles = await extractSrtFromDropEvent(e);
         if (droppedTplFiles.length === 0) {
-          alert('拖入的内容中未找到 SRT 文件');
+          showToast('拖入的内容中未找到 SRT 文件', 'warning');
           templateType = null;
           droppedTplFiles = [];
           tplHintText.textContent = TPL_DEFAULT_HINT;
@@ -129,7 +129,7 @@
           tplHintText.textContent = `已识别 ${droppedTplFiles.length} 个 SRT 模板（B），点击重选`;
         }
       } catch (err) {
-        alert('读取拖入内容失败：' + err.message);
+        showToast('读取拖入内容失败：' + err.message, 'error');
         templateType = null;
         droppedTplFiles = [];
         tplHintText.textContent = TPL_DEFAULT_HINT;
@@ -163,7 +163,7 @@
       try {
         droppedSrtFiles = await extractSrtFromDropEvent(e);
         if (droppedSrtFiles.length === 0) {
-          alert('拖入的内容中未找到 SRT 文件');
+          showToast('拖入的内容中未找到 SRT 文件', 'warning');
           sourceType = null;
           droppedSrtFiles = [];
         } else {
@@ -171,7 +171,7 @@
           statusFix.textContent = `已识别 ${droppedSrtFiles.length} 个 SRT 文件，点击"批量修复"开始`;
         }
       } catch (err) {
-        alert('读取拖入内容失败：' + err.message);
+        showToast('读取拖入内容失败：' + err.message, 'error');
         sourceType = null;
         droppedSrtFiles = [];
       }
@@ -227,9 +227,9 @@
     }
 
     btnFix.onclick = async () => {
-      if (!sourceType) return alert('请上传或拖入字幕（ZIP / 文件夹）');
+      if (!sourceType) return showToast('请上传或拖入字幕（ZIP / 文件夹）', 'warning');
       
-      statusFix.className = 'status';
+      statusFix.className = 'status loading';
       statusFix.textContent = '处理中…';
       btnFix.disabled = true;
       
@@ -319,11 +319,11 @@
     let kwParsed       = null; // 缓存解析结果，删除时复用
 
     btnKwFind.addEventListener('click', async () => {
-      if (!sourceType) { alert('请先上传或拖入字幕（A）'); return; }
+      if (!sourceType) { showToast('请先上传或拖入字幕（A）', 'warning'); return; }
       const raw = kwInput.value.trim();
-      if (!raw) { alert('请输入关键词'); return; }
+      if (!raw) { showToast('请输入关键词', 'warning'); return; }
       btnKwFind.disabled = true;
-      statusKw.className = 'status';
+      statusKw.className = 'status loading';
       statusKw.textContent = '查找中…';
       kwResult.hidden = true;
       btnKwDel.hidden = true;
@@ -450,49 +450,50 @@
     }
 
     btnKwDel.addEventListener('click', async () => {
-      if (!kwParsed) { alert('请先查找关键词'); return; }
-      if (kwSelected.size === 0) { alert('请勾选要删除的字幕条目'); return; }
-      if (!confirm(`确认删除 ${kwSelected.size} 条字幕及其时间轴并导出？`)) return;
-      btnKwDel.disabled = true;
-      statusKw.className = 'status';
-      statusKw.textContent = '删除并导出中…';
-      try {
-        const outputFiles = [];
-        let totalRemoved = 0;
-        for (const p of kwParsed) {
-          const kept = [];
-          for (let i = 0; i < p.subs.length; i++) {
-            const hitId = p.name + '|' + (i + 1);
-            if (kwSelected.has(hitId)) {
-              totalRemoved++;
-            } else {
-              kept.push(p.subs[i]);
+      if (!kwParsed) { showToast('请先查找关键词', 'warning'); return; }
+      if (kwSelected.size === 0) { showToast('请勾选要删除的字幕条目', 'warning'); return; }
+      showConfirm(`确认删除 ${kwSelected.size} 条字幕及其时间轴并导出？`, async () => {
+        btnKwDel.disabled = true;
+        statusKw.className = 'status loading';
+        statusKw.textContent = '删除并导出中…';
+        try {
+          const outputFiles = [];
+          let totalRemoved = 0;
+          for (const p of kwParsed) {
+            const kept = [];
+            for (let i = 0; i < p.subs.length; i++) {
+              const hitId = p.name + '|' + (i + 1);
+              if (kwSelected.has(hitId)) {
+                totalRemoved++;
+              } else {
+                kept.push(p.subs[i]);
+              }
             }
+            if (kept.length === p.subs.length) continue; // 本文件无删除，跳过导出
+            const outName = p.name.split('/').pop();
+            outputFiles.push({ path: outName, content: generateSrt(kept) });
           }
-          if (kept.length === p.subs.length) continue; // 本文件无删除，跳过导出
-          const outName = p.name.split('/').pop();
-          outputFiles.push({ path: outName, content: generateSrt(kept) });
-        }
-        if (outputFiles.length === 0) {
+          if (outputFiles.length === 0) {
+            statusKw.className = 'status err';
+            statusKw.textContent = '没有文件被修改';
+            return;
+          }
+          if (!window.showDirectoryPicker) throw new Error('当前浏览器不支持文件夹导出，请使用 Chrome/Edge');
+          const result = await saveFilesToFolder(outputFiles);
+          if (!result.success) throw new Error(result.message);
+          statusKw.className = 'status ok';
+          statusKw.textContent = `已删除 ${totalRemoved} 条字幕，导出 ${outputFiles.length} 个文件到所选目录`;
+          // 删除后清理选择状态，避免二次操作残留
+          kwSelected.clear();
+          btnKwDel.hidden = true;
+          kwResult.hidden = true;
+        } catch (e) {
           statusKw.className = 'status err';
-          statusKw.textContent = '没有文件被修改';
-          return;
+          statusKw.textContent = e.message;
+        } finally {
+          btnKwDel.disabled = false;
         }
-        if (!window.showDirectoryPicker) throw new Error('当前浏览器不支持文件夹导出，请使用 Chrome/Edge');
-        const result = await saveFilesToFolder(outputFiles);
-        if (!result.success) throw new Error(result.message);
-        statusKw.className = 'status ok';
-        statusKw.textContent = `已删除 ${totalRemoved} 条字幕，导出 ${outputFiles.length} 个文件到所选目录`;
-        // 删除后清理选择状态，避免二次操作残留
-        kwSelected.clear();
-        btnKwDel.hidden = true;
-        kwResult.hidden = true;
-      } catch (e) {
-        statusKw.className = 'status err';
-        statusKw.textContent = e.message;
-      } finally {
-        btnKwDel.disabled = false;
-      }
+      });
     });
 
     // ------- 字幕健康检查（一次性 6 类扫描，复用 parseSrt 结果） -------
@@ -515,9 +516,9 @@
     ];
 
     btnHealth.addEventListener('click', async () => {
-      if (!sourceType) { alert('请先上传或拖入字幕（ZIP / 文件夹）'); return; }
+      if (!sourceType) { showToast('请先上传或拖入字幕（ZIP / 文件夹）', 'warning'); return; }
       btnHealth.disabled = true;
-      statusHealth.className = 'status';
+      statusHealth.className = 'status loading';
       statusHealth.textContent = '扫描中…';
       healthPanel.hidden = false;
       healthChips.hidden = true;
@@ -1074,10 +1075,8 @@
         + safe.slice(start + len);
     }
 
-    function escapeHtmlAttr(s) {
-      return escapeHtml(s).replace(/"/g, '&quot;');
-    }
-    // 注意：formatTimecode 直接复用 srt.js 的全局实现，切勿在此重定义（同名全局函数会覆盖 srt.js 版本，导致 generateSrt 输出错误时间轴）
+    // 注意：formatTimecode 直接复用 srt-core.js 的全局实现，切勿在此重定义（同名全局函数会覆盖 srt-core 版本，导致 generateSrt 输出错误时间轴）
+    // 注意：escapeHtmlAttr 已移入 utils.js，勿在此重定义
   </script>
 </body>
 </html>

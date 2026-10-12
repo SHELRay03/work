@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="style.css?v=17" />
+  <link rel="stylesheet" href="style.css?v=19" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
@@ -258,8 +258,10 @@
     </div>
   </div>
 
-  <script src="srt.js?v=8"></script>
-  <script src="utils.js"></script>
+  <script src="srt-core.js?v=12"></script>
+  <script src="identify-engine.js?v=12"></script>
+  <script src="ai.js?v=12"></script>
+  <script src="utils.js?v=13"></script>
   <script>
     let sourceType = null;
     let subtitleFiles = [];
@@ -317,7 +319,7 @@
       try {
         droppedSrtFiles = await extractSrtFromDropEvent(e);
         if (droppedSrtFiles.length === 0) {
-          alert('拖入的内容中未找到 SRT 文件');
+          showToast('拖入的内容中未找到 SRT 文件', 'warning');
           sourceType = null;
           droppedSrtFiles = [];
         } else {
@@ -325,7 +327,7 @@
           statusIdentify.textContent = `已识别 ${droppedSrtFiles.length} 个 SRT 文件，点击"开始识别"`;
         }
       } catch (err) {
-        alert('读取拖入内容失败：' + err.message);
+        showToast('读取拖入内容失败：' + err.message, 'error');
         sourceType = null;
         droppedSrtFiles = [];
       }
@@ -366,9 +368,9 @@
     }
 
     document.getElementById('btnIdentify').onclick = async () => {
-      if (!sourceType) return alert('请上传或拖入字幕（ZIP / 文件夹）');
+      if (!sourceType) return showToast('请上传或拖入字幕（ZIP / 文件夹）', 'warning');
       
-      statusIdentify.className = 'status';
+      statusIdentify.className = 'status loading';
       statusIdentify.textContent = '解析字幕中…';
       document.getElementById('btnIdentify').disabled = true;
       
@@ -381,14 +383,39 @@
         const doClassify = document.getElementById('classifyContext').checked;
         
         statusIdentify.textContent = `加载停用词表（${scene}）…`;
-        
-        fullResult = await buildTermCandidatesV2(subtitleFiles, {
-          scene: scene,
-          minFreq: minFreq,
-          minLen: 2,
-          maxLen: 4,
-          maxItems: maxItems,
-          classifyContext: doClassify
+
+        // 术语识别在 Web Worker 中执行，避免上百集 SRT 时主线程卡死
+        // AI 精排/解释仍由主线程调 ai.js
+        const worker = new Worker('identify-worker.js');
+        fullResult = await new Promise((resolve, reject) => {
+          worker.onmessage = (e) => {
+            const data = e.data;
+            if (data.type === 'progress') {
+              statusIdentify.textContent = data.message;
+            } else if (data.type === 'result') {
+              worker.terminate();
+              resolve(data);
+            } else if (data.type === 'error') {
+              worker.terminate();
+              reject(new Error(data.message));
+            }
+          };
+          worker.onerror = (e) => {
+            worker.terminate();
+            reject(new Error(e.message || 'Worker 执行失败'));
+          };
+          worker.postMessage({
+            type: 'identify',
+            subtitleFiles,
+            options: {
+              scene: scene,
+              minFreq: minFreq,
+              minLen: 2,
+              maxLen: 4,
+              maxItems: maxItems,
+              classifyContext: doClassify
+            }
+          });
         });
         
         candidates = fullResult.candidates;
@@ -1096,13 +1123,13 @@
     }
 
     document.getElementById('btnExport').onclick = () => {
-      if (!candidates.length) return alert('请先识别术语');
+      if (!candidates.length) return showToast('请先识别术语', 'warning');
       
       // 优先导出已勾选的
       if (selectedIndices.size > 0) {
         const terms = buildExportTerms(false, true);
         if (terms.length === 0) {
-          alert('没有选中的术语可以导出');
+          showToast('没有选中的术语可以导出', 'warning');
           return;
         }
         exportTermsToExcelV2(terms, 'candidate_terms.xlsx');
@@ -1112,7 +1139,12 @@
         // 如果没有勾选，导出所有填写了 Target 的
         const terms = buildExportTerms(true);
         if (terms.length === 0) {
-          if (!confirm('您还没有填写任何 Target，将导出空的 Source 列表。是否继续？')) return;
+          showConfirm('您还没有填写任何 Target，将导出空的 Source 列表。是否继续？', () => {
+            exportTermsToExcelV2(terms, 'candidate_terms.xlsx');
+            statusIdentify.className = 'status ok';
+            statusIdentify.textContent = `已导出 ${terms.length} 条术语`;
+          });
+          return;
         }
         exportTermsToExcelV2(terms, 'candidate_terms.xlsx');
         statusIdentify.className = 'status ok';
@@ -1121,13 +1153,13 @@
     };
 
     document.getElementById('btnExportAll').onclick = () => {
-      if (!candidates.length) return alert('请先识别术语');
+      if (!candidates.length) return showToast('请先识别术语', 'warning');
       
       // 如果有勾选，导出勾选的；否则导出全部
       const onlySelected = selectedIndices.size > 0;
       const terms = buildExportTerms(false, onlySelected);
       if (terms.length === 0) {
-        alert(onlySelected ? '没有选中的术语可以导出' : '没有可导出的术语');
+        showToast(onlySelected ? '没有选中的术语可以导出' : '没有可导出的术语', 'warning');
         return;
       }
       
@@ -1172,7 +1204,7 @@
     document.getElementById('btnAiKeySave').addEventListener('click', () => {
       const key = aiApiKeyInput.value.trim();
       if (!key) {
-        alert('请输入 API Key');
+        showToast('请输入 API Key', 'warning');
         return;
       }
       setZhipuApiKey(key);
@@ -1191,9 +1223,9 @@
     // ========== AI 精排 ==========
 
     document.getElementById('btnAiRefine').addEventListener('click', async () => {
-      if (!candidates.length) return alert('请先识别术语');
+      if (!candidates.length) return showToast('请先识别术语', 'warning');
       if (!getZhipuApiKey()) {
-        alert('请先点击右上角"⚙ AI"设置 API Key');
+        showToast('请先点击右上角"⚙ AI"设置 API Key', 'warning');
         return;
       }
 
@@ -1201,7 +1233,7 @@
       const scene = document.getElementById('sceneSelect').value;
       btn.disabled = true;
       btn.textContent = '✨ AI 精排中…';
-      statusIdentify.className = 'status';
+      statusIdentify.className = 'status loading';
       statusIdentify.textContent = 'AI 精排中，请稍候…';
 
       try {
@@ -1282,7 +1314,7 @@
     document.getElementById('modalAiExplain').addEventListener('click', async () => {
       if (currentFocusIdx < 0) return;
       if (!getZhipuApiKey()) {
-        alert('请先点击右上角"⚙ AI"设置 API Key');
+        showToast('请先点击右上角"⚙ AI"设置 API Key', 'warning');
         return;
       }
 
