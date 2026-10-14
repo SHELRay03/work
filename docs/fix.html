@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+﻿﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
@@ -46,7 +46,7 @@
       </div>
       <div class="opts">
         <label>输出文件夹名称：
-          <input type="text" id="folderName" class="folder-name-input" placeholder="fixed" />
+          <input type="text" id="folderName" class="folder-name-input" placeholder="en原版" />
         </label>
       </div>
       <div class="actions"><button type="button" id="btnFix">批量修复</button><button type="button" id="btnHealth" class="btn-ghost">健康检查</button></div>
@@ -239,7 +239,7 @@
         const reports = [];
         const outputFiles = [];
         const rawFolderName = document.getElementById('folderName').value.trim();
-        const folderName = (rawFolderName || 'fixed').replace(/[\\/:*?"<>|]/g, '_');
+        const folderName = (rawFolderName || 'en原版').replace(/[\\/:*?"<>|]/g, '_');
 
         for (const subFile of subtitleFiles) {
           const subs = parseSrt(subFile.content);
