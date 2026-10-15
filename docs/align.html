@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
@@ -103,12 +103,14 @@
     <!-- Step ④ 替换导出 -->
     <section class="panel" id="exportPanel" hidden>
       <div class="panel-head"><span class="panel-dot"></span><h2>4. 替换并导出</h2></div>
+      <p class="panel-sub">每种目标语言可单独导出；请分别填写输出文件夹名，避免多个同语言目标写入同名文件夹相互覆盖。</p>
       <div class="opts">
         <label><input type="checkbox" id="expAlsoFix" checked /> 替换后 SRT 规范化</label>
         <label><input type="checkbox" id="expFolder" /> 导出为文件夹（需 Chrome/Edge）</label>
       </div>
+      <div id="exportList" class="target-list"></div>
       <div class="actions">
-        <button type="button" id="btnExport" class="btn-primary">导出替换结果</button>
+        <button type="button" id="btnExportAll" class="btn-primary">全部导出</button>
       </div>
       <div class="status" id="statusExport"></div>
     </section>
@@ -156,7 +158,8 @@ const btnDeselectAll= document.getElementById('btnDeselectAll');
 const exportPanel   = document.getElementById('exportPanel');
 const expAlsoFix    = document.getElementById('expAlsoFix');
 const expFolder     = document.getElementById('expFolder');
-const btnExport     = document.getElementById('btnExport');
+const exportList    = document.getElementById('exportList');
+const btnExportAll  = document.getElementById('btnExportAll');
 const statusExport  = document.getElementById('statusExport');
 
 // ------- 源语言：拖放 + 点击 -------
@@ -290,6 +293,7 @@ function addTargetRow(existing) {
     lang: 'ja',
     targetTerm: '',
     replacementTerm: '',
+    exportFolder: '',
     files: [],
   };
   if (!existing) state.targets.push(t);
@@ -448,6 +452,7 @@ btnScanAlign.addEventListener('click', async () => {
     }
 
     renderPairTables();
+    renderExportList();
     reviewPanel.hidden = totalPairs.length === 0;
     exportPanel.hidden = totalPairs.length === 0;
 
@@ -683,73 +688,118 @@ btnDeselectAll.addEventListener('click', () => {
 });
 
 // ------- 替换导出 -------
-btnExport.addEventListener('click', async () => {
+// 每种目标语言单独导出，各自使用可填写的输出文件夹名，避免同语言目标写入同名文件夹相互覆盖。
+
+// 有效输出文件夹名：优先用用户填写的，留空则回退到「正确译法 / 语言」
+function effectiveFolderName(t) {
+  return (t.exportFolder || t.replacementTerm || t.lang).replace(/[\\/:*?"<>|]/g, '_');
+}
+
+// 渲染每个目标的单独导出行（含文件夹名输入框 + 单独导出按钮）
+function renderExportList() {
+  exportList.innerHTML = '';
+  state.targets.forEach((t, ti) => {
+    const pairs = state.pairGroups[ti]?.pairs || [];
+    const row = document.createElement('div');
+    row.className = 'target-row';
+    row.innerHTML = `
+      <div class="target-row-head">
+        <span class="target-row-title">目标 ${ti + 1} · ${escapeHtml(t.lang)} · ${escapeHtml(t.targetTerm)} → ${escapeHtml(t.replacementTerm)}</span>
+        <button type="button" class="btn-small export-one" ${pairs.length === 0 ? 'disabled' : ''}>导出此目标</button>
+      </div>
+      <div class="target-row-body">
+        <label>导出文件夹名：
+          <input type="text" class="t-folder inline-input" placeholder="${escapeHtmlAttr(t.replacementTerm || t.lang)}" value="${escapeHtmlAttr(t.exportFolder || '')}" />
+        </label>
+        <label>自动配对：
+          <span>${pairs.length} 对</span>
+        </label>
+      </div>`;
+    const input = row.querySelector('.t-folder');
+    input.addEventListener('input', () => { t.exportFolder = input.value.trim(); });
+    row.querySelector('.export-one').addEventListener('click', () => runExport([ti]));
+    exportList.appendChild(row);
+  });
+}
+
+// 计算单个目标的输出文件（仅替换审核中勾选的配对）
+function buildTargetOutput(ti, alsoFix) {
+  const t = state.targets[ti];
+  const pairs = state.pairGroups[ti]?.pairs || [];
+  const toReplace = pairs.filter(p => state.keepMap.get(p.id));
+  if (toReplace.length === 0) return null;
+
+  const editsByFile = new Map(); // fileIdx -> Set<lineIdx>
+  for (const p of toReplace) {
+    const fi = t.files.findIndex(f => f.name === p.tgtFile);
+    if (fi === -1) continue;
+    if (!editsByFile.has(fi)) editsByFile.set(fi, new Set());
+    editsByFile.get(fi).add(p.tgtLineIdx);
+  }
+
+  const folderName = effectiveFolderName(t);
+  const files = [];
+  for (const [fi, lineSet] of editsByFile) {
+    const tf = t.files[fi];
+    const subs = parseSrt(tf.content);
+
+    for (const li of lineSet) {
+      if (li < 0 || li >= subs.length) continue;
+      const line = subs[li];
+      if (!line.text) continue;
+      const flat = line.text.replace(/\n/g, ' ');
+      const reg = new RegExp(escapeRegex(t.targetTerm), 'gi');
+      if (reg.test(flat)) {
+        line.text = line.text.replace(reg, t.replacementTerm);
+      }
+    }
+
+    if (alsoFix) {
+      for (const line of subs) {
+        if (line.text) {
+          line.text = line.text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+          const parts = line.text.split('\n').map(p => p.trim()).filter(p => p);
+          line.text = parts.join('\n');
+        }
+        if (line.end <= line.start) {
+          line.end = line.start + 2000;
+        }
+      }
+    }
+
+    files.push({ path: `${folderName}/${tf.name}`, content: generateSrt(subs) });
+  }
+  return { folderName, files };
+}
+
+async function runExport(targetIdxList) {
   const useFolderExport = expFolder.checked;
-  btnExport.disabled = true;
+  const alsoFix = expAlsoFix.checked;
+
+  btnExportAll.disabled = true;
   statusExport.className = 'status loading';
   statusExport.textContent = '替换中…';
 
   try {
-    const masterZip = new JSZip();
-    const allOutputFiles = [];
-
-    for (let ti = 0; ti < state.targets.length; ti++) {
-      const t = state.targets[ti];
-      const pairs = state.pairGroups[ti]?.pairs || [];
-      const toReplace = pairs.filter(p => state.keepMap.get(p.id));
-      if (toReplace.length === 0) continue;
-
-      // 构建每个文件需要替换的行集合
-      const editsByFile = new Map(); // fileIdx -> Set<lineIdx>
-      for (const p of toReplace) {
-        const fi = t.files.findIndex(f => f.name === p.tgtFile);
-        if (fi === -1) continue;
-        if (!editsByFile.has(fi)) editsByFile.set(fi, new Set());
-        editsByFile.get(fi).add(p.tgtLineIdx);
-      }
-
-      const folderName = (t.replacementTerm || t.lang).replace(/[\\/:*?"<>|]/g, '_');
-
-      for (const [fi, lineSet] of editsByFile) {
-        const tf = t.files[fi];
-        const subs = parseSrt(tf.content);
-        let changeCount = 0;
-
-        for (const li of lineSet) {
-          if (li < 0 || li >= subs.length) continue;
-          const line = subs[li];
-          if (!line.text) continue;
-          const flat = line.text.replace(/\n/g, ' ');
-          const reg = new RegExp(escapeRegex(t.targetTerm), 'gi');
-          if (reg.test(flat)) {
-            line.text = line.text.replace(reg, t.replacementTerm);
-            changeCount++;
-          }
-        }
-
-        if (expAlsoFix.checked) {
-          for (const line of subs) {
-            if (line.text) {
-              line.text = line.text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-              const parts = line.text.split('\n').map(p => p.trim()).filter(p => p);
-              line.text = parts.join('\n');
-            }
-            if (line.end <= line.start) {
-              line.end = line.start + 2000;
-            }
-          }
-        }
-
-        const outContent = generateSrt(subs);
-        const relPath = `${folderName}/${tf.name}`;
-        masterZip.file(relPath, outContent);
-        allOutputFiles.push({ path: relPath, content: outContent });
-      }
+    const outputs = [];
+    for (const ti of targetIdxList) {
+      const o = buildTargetOutput(ti, alsoFix);
+      if (o) outputs.push({ ti, ...o });
     }
-
-    if (allOutputFiles.length === 0) {
+    if (outputs.length === 0) {
       throw new Error('没有任何保留的配对，请在「配对审核」中勾选要替换的项');
     }
+
+    // 输出文件夹重名检测：直接报错，避免同路径文件被静默覆盖
+    const nameOwners = new Map();
+    for (const o of outputs) {
+      if (nameOwners.has(o.folderName)) {
+        throw new Error(`目标 ${nameOwners.get(o.folderName) + 1} 与 目标 ${o.ti + 1} 的导出文件夹名均为「${o.folderName}」，请在上方填写不同的名称`);
+      }
+      nameOwners.set(o.folderName, o.ti);
+    }
+
+    const allOutputFiles = outputs.flatMap(o => o.files);
 
     if (useFolderExport) {
       if (!window.showDirectoryPicker) {
@@ -758,21 +808,26 @@ btnExport.addEventListener('click', async () => {
       const result = await saveFilesToFolder(allOutputFiles);
       if (!result.success) throw new Error(result.message);
       statusExport.className = 'status ok';
-      const folderList = state.targets.map(t => (t.replacementTerm || t.lang)).join('、');
-      statusExport.textContent = `${result.message}（${state.targets.length} 种目标语言，输出文件夹：${folderList}）`;
+      const folderList = outputs.map(o => o.folderName).join('、');
+      statusExport.textContent = `${result.message}（${outputs.length} 个输出文件夹：${folderList}）`;
     } else {
-      const blob = await masterZip.generateAsync({ type: 'blob' });
-      downloadBlob(blob, 'aligned_replace.zip');
+      const zip = new JSZip();
+      for (const f of allOutputFiles) zip.file(f.path, f.content);
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const zipName = targetIdxList.length === 1 ? `aligned_replace_${outputs[0].folderName}.zip` : 'aligned_replace.zip';
+      downloadBlob(blob, zipName);
       statusExport.className = 'status ok';
-      statusExport.textContent = `已完成，下载已开始（${allOutputFiles.length} 个文件，${state.targets.length} 种语言）`;
+      statusExport.textContent = `已完成，下载已开始（${allOutputFiles.length} 个文件，${outputs.length} 个目标）`;
     }
   } catch (e) {
     statusExport.className = 'status err';
     statusExport.textContent = '导出失败：' + e.message;
   } finally {
-    btnExport.disabled = false;
+    btnExportAll.disabled = false;
   }
-});
+}
+
+btnExportAll.addEventListener('click', () => runExport(state.targets.map((_, i) => i)));
 
 // ------- 工具函数 -------
 function extractFileNumber(name) {
