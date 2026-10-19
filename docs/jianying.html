@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>剪映草稿 · 字幕工具箱</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="style.css?v=19" />
+  <style>
+    /* 剪映草稿页：配色与组件全部来自工具箱 style.css，此处仅补充少量布局 */
+    #jy-root { max-width: 860px; margin: 0 auto; }
+    #jy-root .inline-input { width: 100%; }
+    #jy-root .jy-note {
+      font-size: 0.78rem;
+      color: var(--text-muted, #4d6b5f);
+      margin-top: 0.35rem;
+    }
+    #jy-root .run-btn { width: 100%; padding: 0.75rem; font-size: 0.95rem; }
+    #jy-root #result { margin-top: 1rem; }
+    #jy-root .cell-ok { color: var(--mint-deep, #2f8f6e); font-weight: 600; }
+    #jy-root .cell-bad { color: var(--danger, #c45c5c); font-weight: 600; }
+    #jy-root .hint code {
+      background: rgba(255, 255, 255, 0.7);
+      padding: 1px 5px;
+      border-radius: 4px;
+      border: 1px solid var(--line, rgba(47, 143, 110, 0.22));
+    }
+  </style>
+</head>
+<body>
+  <div class="bg-layer" aria-hidden="true"></div>
+
+  <header class="hud-top">
+    <a href="index.html" class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="1.5" rx=".5" fill="#fafffd"/><rect x="2" y="7.25" width="9" height="1.5" rx=".5" fill="#fafffd" opacity=".9"/><rect x="2" y="10.5" width="11" height="1.5" rx=".5" fill="#fafffd" opacity=".75"/></svg>
+      </span>
+      字幕工具箱
+    </a>
+    <nav class="hud-nav">
+      <a href="index.html">首页</a>
+      <a href="preprocess.html">预处理</a>
+      <a href="reorganize.html">语种重组</a>
+      <a href="replace.html">术语替换</a>
+      <a href="fix.html">SRT 修复</a>
+      <a href="flatten.html">目录平铺</a>
+      <span class="nav-sep"></span>
+      <a href="align.html">跨语言对齐</a>
+      <a href="rename.html">重命名同步</a>
+      <a href="jianying.html" class="active">剪映草稿</a>
+    </nav>
+  </header>
+
+  <main class="hud-main">
+    <h1 class="page-title">剪映草稿批量生成</h1>
+    <p class="page-sub">按文件名编号自动匹配视频与字幕，顺序拼接成<b>一个</b>剪映草稿（需本地后端运行）。</p>
+
+    <div id="jy-root">
+      <section class="panel">
+        <div class="panel-head"><span class="panel-dot"></span><h2>1. 选择视频与字幕</h2></div>
+
+        <div class="result-tabs" id="jyTabs">
+          <button type="button" class="tab-btn active" data-mode="upload">上传文件夹</button>
+          <button type="button" class="tab-btn" data-mode="path">输入目录路径</button>
+        </div>
+
+        <div class="tab-content" id="uploadPane">
+          <div class="field">
+            <label for="videoInput">视频文件夹</label>
+            <input id="videoInput" type="file" webkitdirectory multiple />
+            <div class="jy-note" id="videoInfo">未选择</div>
+          </div>
+          <div class="field">
+            <label for="subInput">字幕文件夹</label>
+            <input id="subInput" type="file" webkitdirectory multiple />
+            <div class="jy-note" id="subInfo">未选择</div>
+          </div>
+          <p class="hint">上传会把文件复制到 <code>_webapp_cache</code>（草稿需记录真实文件路径），视频较大时建议切换到「输入目录路径」，零拷贝更快。</p>
+        </div>
+
+        <div class="tab-content" id="pathPane" hidden>
+          <div class="field">
+            <label for="videoDir">视频目录</label>
+            <input id="videoDir" class="inline-input" type="text" placeholder="d:\A英语剧\103716\原剧" />
+          </div>
+          <div class="field">
+            <label for="subDir">字幕目录</label>
+            <input id="subDir" class="inline-input" type="text" placeholder="d:\A英语剧\103716\英文旁白" />
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><span class="panel-dot"></span><h2>2. 输出设置</h2></div>
+        <div class="field">
+          <label for="draftFolder">剪映草稿目录</label>
+          <input id="draftFolder" class="inline-input" type="text" value="d:\JianyingPro Drafts" />
+        </div>
+        <div class="field">
+          <label for="namePrefix">草稿名称（可选）</label>
+          <input id="namePrefix" class="inline-input" type="text" placeholder="留空则用剧集文件夹名，如 103716" />
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><span class="panel-dot"></span><h2>3. 生成草稿</h2></div>
+        <button id="run" type="button" class="run-btn">开始生成</button>
+        <div id="status" class="status"></div>
+        <div id="result"></div>
+      </section>
+    </div>
+  </main>
+
+<script>
+let mode = "upload";
+let videoFiles = [], subFiles = [];
+
+const statusEl = document.getElementById("status");
+function setMsg(text, cls) {
+  statusEl.className = "status" + (cls ? " " + cls : "");
+  statusEl.textContent = text;
+}
+
+document.querySelectorAll("#jyTabs .tab-btn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll("#jyTabs .tab-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    mode = btn.dataset.mode;
+    document.getElementById("uploadPane").hidden = mode !== "upload";
+    document.getElementById("pathPane").hidden = mode !== "path";
+  };
+});
+
+function bindCount(inputId, infoId, setter) {
+  document.getElementById(inputId).addEventListener("change", e => {
+    const list = [...e.target.files];
+    setter(list);
+    document.getElementById(infoId).textContent =
+      list.length ? `已选择 ${list.length} 个文件` : "未选择";
+  });
+}
+bindCount("videoInput", "videoInfo", v => videoFiles = v);
+bindCount("subInput", "subInfo", v => subFiles = v);
+
+document.getElementById("run").onclick = () => {
+  const result = document.getElementById("result");
+  const btn = document.getElementById("run");
+
+  const fd = new FormData();
+  fd.append("mode", mode);
+  fd.append("draft_folder", document.getElementById("draftFolder").value.trim());
+  fd.append("name_prefix", document.getElementById("namePrefix").value.trim());
+
+  if (mode === "path") {
+    const v = document.getElementById("videoDir").value.trim();
+    const s = document.getElementById("subDir").value.trim();
+    if (!v || !s) { setMsg("请填写视频目录与字幕目录", "warn"); return; }
+    fd.append("video_dir", v);
+    fd.append("subtitle_dir", s);
+  } else {
+    const all = [...videoFiles, ...subFiles];
+    if (!all.length) { setMsg("请先选择视频文件夹与字幕文件夹", "warn"); return; }
+    for (const f of all) {
+      fd.append("rels", f.webkitRelativePath || f.name);
+      fd.append("files", f);
+    }
+  }
+
+  btn.disabled = true;
+  result.innerHTML = "";
+  setMsg("处理中…", "loading");
+
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", "/api/jianying/generate");
+  xhr.upload.onprogress = e => {
+    if (e.lengthComputable && mode === "upload")
+      setMsg(`上传中 ${Math.round(e.loaded / e.total * 100)}%…`, "loading");
+  };
+  xhr.onload = () => {
+    btn.disabled = false;
+    let data;
+    try { data = JSON.parse(xhr.responseText); } catch { data = null; }
+    if (!data || data.error) {
+      setMsg("失败：" + (data ? data.error : xhr.responseText), "err");
+      return;
+    }
+    const clips = data.clips || [];
+    const okN = clips.filter(c => c.ok).length;
+    setMsg(`完成：草稿「${data.name}」已生成，拼接 ${okN}/${clips.length} 集，` +
+      `字幕 ${data.cues} 条，总时长 ${Math.round(data.duration / 1e6)} 秒，草稿目录 ${data.draft_folder}`, "ok");
+    const rows = clips.map(c => {
+      const t = c.ok
+        ? `${(c.start / 1e6).toFixed(1)}s 起 / ${(c.duration / 1e6).toFixed(1)}s` +
+          (c.dropped ? ` / 裁掉 ${c.dropped} 条越界字幕` : "")
+        : "";
+      return `<tr><td>${c.number}</td><td class="${c.ok ? "cell-ok" : "cell-bad"}">${c.ok ? "成功" : "失败"}</td>
+       <td>${c.ok ? c.video + " + " + c.srt : c.error}</td><td>${t}</td></tr>`;
+    }).join("");
+    result.innerHTML =
+      `<div class="diff-table-wrap"><table class="diff-table"><thead><tr>` +
+      `<th>编号</th><th>状态</th><th>视频 + 字幕</th><th>时间轴位置</th>` +
+      `</tr></thead><tbody>${rows}</tbody></table></div>`;
+  };
+  xhr.onerror = () => { btn.disabled = false; setMsg("网络错误", "err"); };
+  xhr.send(fd);
+};
+</script>
+</body>
+</html>

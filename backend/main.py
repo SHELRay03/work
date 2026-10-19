@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import io
+import threading
+import uuid
 import zipfile
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
+from . import jianying as jy
+from . import reorganizer as rz
+from .lang_maps import BASE_LANG, CATEGORIES, LANG_CHAR, LANG_FULL, guess_lang
 from .pipeline import (
     parse_hit_id_json,
     process_audit_glossary,
@@ -25,6 +31,15 @@ if not FRONTEND_DIR.exists():
     FRONTEND_DIR = APP_ROOT / "docs"
 
 app = FastAPI(title="Subtitle Toolkit", version="0.1.0")
+
+
+@app.middleware("http")
+async def no_store(request: Request, call_next):
+    """本地工具禁用缓存，避免浏览器加载到过期的静态资源。"""
+    resp = await call_next(request)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
 
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
@@ -88,6 +103,11 @@ async def page_audit():
 @app.get("/rename", response_class=HTMLResponse)
 async def page_rename():
     return _html_page("rename.html")
+
+
+@app.get("/jianying", response_class=HTMLResponse)
+async def page_jianying():
+    return _html_page("jianying.html")
 
 
 def _zip_response(data: bytes, filename: str) -> StreamingResponse:
@@ -263,3 +283,160 @@ async def sample_subtitles():
     if path.exists():
         return FileResponse(path, filename="subtitles_sample.zip")
     return Response(status_code=404, content="sample not found")
+
+
+# ============================ 语种重组 ============================
+
+REORG_JOBS = {}  # job_id -> state
+
+
+class ReorgScanReq(BaseModel):
+    root: str
+    show_name: str = ""
+    title_map_text: str = ""
+    lang_overrides: dict = {}
+
+
+class ReorgExecReq(BaseModel):
+    units: list = []
+    conflict: str = "skip"
+
+
+def _norm_root(value):
+    return Path(str(value).strip().strip('"').strip("'"))
+
+
+def _reorg_parse_rows(title_map_text, lang_overrides):
+    """解析映射表并按用户选择/启发式为每行补语种。"""
+    rows, report = rz.parse_title_map(title_map_text)
+    overrides = lang_overrides or {}
+    for row in rows:
+        chosen = (overrides.get(row["code"]) or "").strip()
+        row["lang"] = chosen or (guess_lang(row["title"]) or "")
+    return rows, report
+
+
+def _reorg_unit_payload(root_str, sr, title_rows, override=""):
+    name = Path(root_str).name
+    title, lang = rz.resolve_title(name, title_rows)
+    show_name = (override or "").strip() or title or name
+    plan = rz.build_plan(sr, show_name, sr["target_langs"], code=name)
+    return {
+        "root": root_str,
+        "folder_name": name,
+        "code": "",
+        "show_name": show_name,
+        "title_from_map": title or "",
+        "lang_guess": lang or "",
+        "categories": rz.category_summary(sr),
+        "all_langs": sr["all_langs"],
+        "target_langs": sr["target_langs"],
+        "xlsx": sr["xlsx"],
+        "plan": plan,
+    }
+
+
+@app.post("/api/reorganize/scan")
+def reorganize_scan(req: ReorgScanReq):
+    root = _norm_root(req.root)
+    if not root.is_dir():
+        return JSONResponse({"error": f"源根目录不存在或不是文件夹: {root}"}, status_code=400)
+
+    title_rows, report = _reorg_parse_rows(req.title_map_text, req.lang_overrides)
+    mode, units, skipped = rz.scan_units(root)
+
+    unit_payloads = []
+    for i, u in enumerate(units):
+        override = req.show_name if (mode == "single" and i == 0) else ""
+        unit_payloads.append(_reorg_unit_payload(u["root"], u["scan"], title_rows, override))
+
+    return {
+        "mode": mode,
+        "root": str(root),
+        "units": unit_payloads,
+        "skipped_dirs": skipped,
+        "title_rows": title_rows,
+        "parse_report": report,
+        "categories_meta": [{"id": c["id"], "key": c["key"],
+                             "has_lang_layer": c["id"] not in rz.FLAT_CATEGORIES}
+                            for c in CATEGORIES],
+        "lang_full": LANG_FULL,
+        "lang_char": LANG_CHAR,
+        "base_lang": BASE_LANG,
+    }
+
+
+@app.post("/api/reorganize/execute")
+def reorganize_execute(req: ReorgExecReq):
+    if not req.units:
+        return JSONResponse({"error": "没有可执行的剧集单元。"}, status_code=400)
+
+    plans = []
+    for u in req.units or []:
+        root = _norm_root(u.get("root", ""))
+        if not root.is_dir():
+            return JSONResponse({"error": f"源目录不存在: {root}"}, status_code=400)
+        sr = rz.scan(root)
+        target_langs = u.get("target_langs") or sr["target_langs"]
+        if not target_langs:
+            continue
+        show_name = (u.get("show_name") or "").strip() or root.name
+        plans.append(rz.build_plan(sr, show_name, target_langs, code=root.name))
+
+    if not plans:
+        return JSONResponse(
+            {"error": "所选剧集均无目标语种（除英语外），无法重组。"}, status_code=400)
+
+    job_id = uuid.uuid4().hex
+    state = {
+        "id": job_id, "status": "running",
+        "total": 0, "done": 0, "current": "",
+        "errors": [], "reports": [], "summary": None,
+    }
+    REORG_JOBS[job_id] = state
+
+    def worker():
+        try:
+            rz.execute(plans, req.conflict, state)
+        except Exception as e:  # noqa: BLE001
+            state["status"] = "done"
+            state["errors"].append(
+                {"group": "", "sub": "", "message": f"执行异常: {e}"})
+
+    threading.Thread(target=worker, daemon=True).start()
+    return {"job_id": job_id}
+
+
+@app.get("/api/reorganize/job/{job_id}")
+def reorganize_job(job_id: str):
+    state = REORG_JOBS.get(job_id)
+    if not state:
+        return JSONResponse({"error": "任务不存在"}, status_code=404)
+    return state
+
+
+# ============================ 剪映草稿 ============================
+
+@app.post("/api/jianying/generate")
+async def jianying_generate(
+    mode: str = Form(default="upload"),
+    files: list[UploadFile] = File(default=[]),
+    rels: list[str] = Form(default=[]),
+    video_dir: str = Form(default=""),
+    subtitle_dir: str = Form(default=""),
+    draft_folder: str = Form(default=""),
+    name_prefix: str = Form(default=""),
+):
+    uploads = [(rel or up.filename or "unnamed", up.file)
+               for up, rel in zip(files, rels)]
+    result = jy.generate(mode, uploads, video_dir, subtitle_dir,
+                         draft_folder, name_prefix)
+    if "error" in result:
+        return JSONResponse(result, status_code=400)
+    return result
+
+
+# 根静态挂载：使页面中的相对资源路径（style.css、utils.js、页面间 *.html 链接）
+# 在 uvicorn 下同样可用。必须放在所有路由之后，已注册路由优先匹配。
+if FRONTEND_DIR.exists():
+    app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="root-static")
