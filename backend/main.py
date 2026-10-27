@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import threading
 import uuid
 import zipfile
@@ -15,6 +16,7 @@ from pydantic import BaseModel
 
 from . import jianying as jy
 from . import reorganizer as rz
+from . import role_sheet as rs
 from .lang_maps import BASE_LANG, CATEGORIES, LANG_CHAR, LANG_FULL, guess_lang
 from .pipeline import (
     parse_hit_id_json,
@@ -31,6 +33,33 @@ if not FRONTEND_DIR.exists():
     FRONTEND_DIR = APP_ROOT / "docs"
 
 app = FastAPI(title="Subtitle Toolkit", version="0.1.0")
+
+
+# ----- 统一响应格式 -----
+# 所有后端接口统一返回 {"ok": bool, "data": ..., "msg": "..."}
+# 前端 catch 里只判断 !data.ok 即可
+
+def ok(data=None, msg="", **kwargs):
+    """成功响应。
+
+    三种写法都支持：
+      ok(report=..., job_id=...)    → 扁平化业务字段
+      ok({"report": ..., "rows": ...}) → 传入 dict，自动展开
+      ok()                           → 只有 ok=True, msg=""
+    """
+    if isinstance(data, dict):
+        # 位置参数是 dict — 展开
+        payload = {"ok": True, "msg": msg, **data, **kwargs}
+    elif data is None:
+        payload = {"ok": True, "msg": msg, **kwargs}
+    else:
+        payload = {"ok": True, "msg": msg, "data": data, **kwargs}
+    return payload
+
+
+def fail(msg, code=400):
+    """失败响应。msg 是给用户看的错误信息，code 是 HTTP 状态码。"""
+    return JSONResponse({"ok": False, "msg": str(msg)}, status_code=code)
 
 
 @app.middleware("http")
@@ -110,6 +139,11 @@ async def page_jianying():
     return _html_page("jianying.html")
 
 
+@app.get("/role-sheet", response_class=HTMLResponse)
+async def page_role_sheet():
+    return _html_page("role_sheet.html")
+
+
 def _zip_response(data: bytes, filename: str) -> StreamingResponse:
     return StreamingResponse(
         io.BytesIO(data),
@@ -127,13 +161,11 @@ async def scan_replace(
     gloss_bytes = await glossary.read()
     zip_bytes = await subtitles.read()
     limit = 1 if preview else None
-    return JSONResponse(
-        scan_replace_zip(
-            gloss_bytes,
-            zip_bytes,
-            preview_limit=limit,
-        )
-    )
+    return ok(scan_replace_zip(
+        gloss_bytes,
+        zip_bytes,
+        preview_limit=limit,
+    ))
 
 
 @app.post("/api/replace")
@@ -226,19 +258,17 @@ async def compare_subtitles(
         }
         for d in diffs
     ]
-    return JSONResponse(
-        {
-            "summary": {
-                "files_compared": summary.files_compared,
-                "total_diffs": summary.total_diffs,
-                "files_only_manual": summary.files_only_manual,
-                "files_only_toolkit": summary.files_only_toolkit,
-                "warnings": summary.warnings,
-            },
-            "rows": rows,
-            "csv_download_hint": "Use compare page download button for ZIP export",
-        }
-    )
+    return ok({
+        "summary": {
+            "files_compared": summary.files_compared,
+            "total_diffs": summary.total_diffs,
+            "files_only_manual": summary.files_only_manual,
+            "files_only_toolkit": summary.files_only_toolkit,
+            "warnings": summary.warnings,
+        },
+        "rows": rows,
+        "csv_download_hint": "Use compare page download button for ZIP export",
+    })
 
 
 @app.post("/api/compare-subtitles/download")
@@ -340,7 +370,7 @@ def _reorg_unit_payload(root_str, sr, title_rows, override=""):
 def reorganize_scan(req: ReorgScanReq):
     root = _norm_root(req.root)
     if not root.is_dir():
-        return JSONResponse({"error": f"源根目录不存在或不是文件夹: {root}"}, status_code=400)
+        return fail(f"源根目录不存在或不是文件夹: {root}", 400)
 
     title_rows, report = _reorg_parse_rows(req.title_map_text, req.lang_overrides)
     mode, units, skipped = rz.scan_units(root)
@@ -350,7 +380,7 @@ def reorganize_scan(req: ReorgScanReq):
         override = req.show_name if (mode == "single" and i == 0) else ""
         unit_payloads.append(_reorg_unit_payload(u["root"], u["scan"], title_rows, override))
 
-    return {
+    return ok({
         "mode": mode,
         "root": str(root),
         "units": unit_payloads,
@@ -363,19 +393,19 @@ def reorganize_scan(req: ReorgScanReq):
         "lang_full": LANG_FULL,
         "lang_char": LANG_CHAR,
         "base_lang": BASE_LANG,
-    }
+    })
 
 
 @app.post("/api/reorganize/execute")
 def reorganize_execute(req: ReorgExecReq):
     if not req.units:
-        return JSONResponse({"error": "没有可执行的剧集单元。"}, status_code=400)
+        return fail("没有可执行的剧集单元。", 400)
 
     plans = []
     for u in req.units or []:
         root = _norm_root(u.get("root", ""))
         if not root.is_dir():
-            return JSONResponse({"error": f"源目录不存在: {root}"}, status_code=400)
+            return fail(f"源目录不存在: {root}", 400)
         sr = rz.scan(root)
         target_langs = u.get("target_langs") or sr["target_langs"]
         if not target_langs:
@@ -384,8 +414,7 @@ def reorganize_execute(req: ReorgExecReq):
         plans.append(rz.build_plan(sr, show_name, target_langs, code=root.name))
 
     if not plans:
-        return JSONResponse(
-            {"error": "所选剧集均无目标语种（除英语外），无法重组。"}, status_code=400)
+        return fail("所选剧集均无目标语种（除英语外），无法重组。", 400)
 
     job_id = uuid.uuid4().hex
     state = {
@@ -404,15 +433,15 @@ def reorganize_execute(req: ReorgExecReq):
                 {"group": "", "sub": "", "message": f"执行异常: {e}"})
 
     threading.Thread(target=worker, daemon=True).start()
-    return {"job_id": job_id}
+    return ok({"job_id": job_id})
 
 
 @app.get("/api/reorganize/job/{job_id}")
 def reorganize_job(job_id: str):
     state = REORG_JOBS.get(job_id)
     if not state:
-        return JSONResponse({"error": "任务不存在"}, status_code=404)
-    return state
+        return fail("任务不存在", 404)
+    return ok(state)
 
 
 # ============================ 剪映草稿 ============================
@@ -422,18 +451,173 @@ async def jianying_generate(
     mode: str = Form(default="upload"),
     files: list[UploadFile] = File(default=[]),
     rels: list[str] = Form(default=[]),
+    groups: list[str] = Form(default=[]),
     video_dir: str = Form(default=""),
     subtitle_dir: str = Form(default=""),
     draft_folder: str = Form(default=""),
     name_prefix: str = Form(default=""),
+    subtitle_dir_en: str = Form(default=""),
+    subtitle_dir_zh: str = Form(default=""),
 ):
-    uploads = [(rel or up.filename or "unnamed", up.file)
-               for up, rel in zip(files, rels)]
+    if groups and len(groups) == len(files):
+        uploads = [(g or "video", rel or up.filename or "unnamed", up.file)
+                   for up, rel, g in zip(files, rels, groups)]
+    else:
+        # 旧格式兼容：无 groups 时全部归 video
+        uploads = [(rel or up.filename or "unnamed", up.file)
+                   for up, rel in zip(files, rels)]
     result = jy.generate(mode, uploads, video_dir, subtitle_dir,
-                         draft_folder, name_prefix)
+                         draft_folder, name_prefix,
+                         subtitle_dir_en, subtitle_dir_zh)
     if "error" in result:
-        return JSONResponse(result, status_code=400)
-    return result
+        return fail(result["error"], 400)
+    return ok(result)
+
+
+@app.post("/api/jianying/list-manifests")
+async def jianying_list_manifests(draft_folder: str = Form("")):
+    """列出草稿目录下所有本工具生成的分集清单，供反拆分选择。"""
+    if not draft_folder.strip():
+        return fail("请填写剪映草稿目录")
+    try:
+        items = jy.list_manifests(draft_folder.strip())
+    except ValueError as e:
+        return fail(str(e))
+    return ok(items=items)
+
+
+@app.post("/api/jianying/split-export")
+async def jianying_split_export(
+    srt: UploadFile = File(...),
+    draft_folder: str = Form(""),
+    manifest_name: str = Form(""),
+    output_dir: str = Form(""),
+    force: str = Form("false"),
+):
+    """把剪映导出的合并 SRT 按草稿分集清单反拆分为每集一个 SRT。"""
+    if not output_dir.strip():
+        return fail("请填写输出目录")
+    if not manifest_name.strip():
+        return fail("请先选择草稿清单")
+
+    mp = Path(draft_folder.strip()) / manifest_name.strip() / jy.MANIFEST_NAME
+    if not mp.is_file():
+        return fail(f"未找到草稿清单：{mp}")
+    try:
+        manifest = json.loads(mp.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError) as e:
+        return fail(f"清单文件解析失败：{e}")
+
+    raw = await srt.read()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("gbk", errors="replace")
+
+    is_force = force.strip().lower() in ("true", "1", "yes")
+    try:
+        result = jy.split_export(text, manifest, output_dir.strip(), force=is_force)
+    except ValueError as e:
+        return fail(str(e))
+
+    if result.get("confirm_needed"):
+        return JSONResponse(
+            {"ok": False, "msg": "输出目录已存在同名文件",
+             "confirm_needed": True, "existing": result["existing"]},
+            status_code=409)
+    return ok(result)
+
+
+@app.post("/api/pick-folder")
+async def pick_folder(title: str = Form("选择文件夹"), initial: str = Form("")):
+    """弹出 Windows 原生文件夹选择对话框，返回用户选择的绝对路径（取消则返回空串）。
+
+    在 FastAPI worker 主线程用 tkinter 弹窗；无显示环境（纯服务器）时返回 fail 并提示改用手动输入。
+    """
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except ImportError:
+        return fail("本机缺少 tkinter，无法弹出文件夹选择框，请手动输入路径", 501)
+
+    root = tk.Tk()
+    root.withdraw()  # 不显示主窗口
+    root.attributes("-topmost", True)
+
+    # 把对话框放在前面，避免被 FastAPI 控制台盖住
+    initial_dir = initial.strip()
+    if initial_dir and Path(initial_dir).is_dir():
+        chosen = filedialog.askdirectory(title=title, initialdir=initial_dir, parent=root)
+    else:
+        chosen = filedialog.askdirectory(title=title, parent=root)
+
+    try:
+        root.destroy()
+    except Exception:
+        pass
+
+    if not chosen:
+        return ok(path="", msg="已取消")
+    return ok(path=chosen)
+
+
+# ============================ 角色表转换 ============================
+
+@app.post("/api/role-sheet/convert")
+async def role_sheet_convert(
+    xlsx: UploadFile = File(...),
+    blank_rows: int = Form(5),
+    sheet_name: str = Form("本地化清单"),
+    preview_only: str = Form("false"),
+    output_path: str = Form(""),
+    force: str = Form("false"),
+):
+    import base64, re
+    is_preview = preview_only.strip().lower() in ('true', '1', 'yes')
+    safe_sheet = re.sub(r'[\\/:*?"<>|]', '_',
+                        (sheet_name or "本地化清单").strip() or "本地化清单")
+    data = await xlsx.read()
+    try:
+        out_bytes, report = rs.convert(
+            data,
+            filename=(xlsx.filename or "role_sheet"),
+            blank_rows=blank_rows,
+            sheet_name=(sheet_name or "本地化清单"),
+            preview_only=is_preview,
+        )
+    except ValueError as e:
+        return fail(str(e), 400)
+    except RuntimeError as e:
+        return fail(str(e), 500)
+
+    if is_preview:
+        return ok({"report": report})
+
+    # 后端落盘：值以 .xlsx 结尾视为完整文件路径，否则视为文件夹（保存为 工作表名.xlsx）
+    raw_out = (output_path or "").strip()
+    if raw_out:
+        if raw_out.lower().endswith(".xlsx"):
+            out_file = Path(raw_out)
+        else:
+            out_file = Path(raw_out) / f"{safe_sheet}.xlsx"
+        if out_file.exists() and force.strip().lower() not in ("true", "1", "yes"):
+            return JSONResponse(
+                {"ok": False, "msg": "目标文件已存在", "confirm_needed": True,
+                 "existing": [str(out_file)]},
+                status_code=409)
+        try:
+            out_file.parent.mkdir(parents=True, exist_ok=True)
+            out_file.write_bytes(out_bytes)
+            return ok({"report": report, "saved_path": str(out_file.resolve())})
+        except OSError as e:
+            return fail(f"无法写入 {out_file}：{e}", 400)
+
+    # 兜底：返回 base64 让前端弹下载
+    return ok({
+        "report": report,
+        "download_name": f"{safe_sheet}.xlsx",
+        "xlsx_base64": base64.b64encode(out_bytes).decode("ascii"),
+    })
 
 
 # 根静态挂载：使页面中的相对资源路径（style.css、utils.js、页面间 *.html 链接）

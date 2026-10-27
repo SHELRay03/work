@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 // ------------------------- 全局状态 -------------------------
 let scanData = null;   // /api/scan 返回
@@ -181,7 +181,7 @@ async function doScan() {
       }),
     });
     const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || '扫描失败');
+    if (!resp.ok || !data.ok) throw new Error(data.msg || '扫描失败');
 
     scanData = data;
     langFull = data.lang_full || {};
@@ -456,7 +456,7 @@ function startExecute(conflict) {
   })
     .then(async (resp) => {
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error || '执行失败');
+      if (!resp.ok || !data.ok) throw new Error(data.msg || '执行失败');
       pollJob(data.job_id);
     })
     .catch((e) => {
@@ -485,7 +485,7 @@ function pollJob(jobId) {
     try {
       const resp = await fetch('/api/reorganize/job/' + jobId);
       const state = await resp.json();
-      if (!resp.ok) throw new Error(state.error || '任务查询失败');
+      if (!resp.ok || !state.ok) throw new Error(state.msg || '任务查询失败');
       updateProgress(state);
       if (state.status === 'done') {
         clearInterval(pollTimer);

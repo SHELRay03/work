@@ -1,141 +1,2125 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>语种重组 · 字幕工具箱</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
-  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="style.css?v=19" />
-  <link rel="stylesheet" href="reorganize.css?v=2" />
-</head>
-<body>
-  <div class="bg-layer" aria-hidden="true"></div>
-
-  <header class="hud-top">
-    <a href="index.html" class="brand">
-      <span class="brand-mark" aria-hidden="true">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="1.5" rx=".5" fill="#fafffd"/><rect x="2" y="7.25" width="9" height="1.5" rx=".5" fill="#fafffd" opacity=".9"/><rect x="2" y="10.5" width="11" height="1.5" rx=".5" fill="#fafffd" opacity=".75"/></svg>
-      </span>
-      字幕工具箱
-    </a>
-    <nav class="hud-nav">
-      <a href="index.html">首页</a>
-      <a href="preprocess.html">预处理</a>
-      <a href="reorganize.html" class="active">语种重组</a>
-      <a href="replace.html">术语替换</a>
-      <a href="fix.html">SRT 修复</a>
-      <a href="flatten.html">目录平铺</a>
-      <span class="nav-sep"></span>
-      <a href="align.html">跨语言对齐</a>
-      <a href="rename.html">重命名同步</a>
-      <a href="jianying.html">剪映草稿</a>
-    </nav>
-  </header>
-
-  <main class="hud-main">
-    <h1 class="page-title">语种重组</h1>
-    <p class="page-sub">按类别组织 → 按语种组织 · 源文件只读，全部为复制；输出到源目录同级（需本地后端运行）</p>
-
-    <div id="rz-root">
-      <div class="layout">
-
-        <!-- 步骤 1：选择源目录 -->
-        <section class="step" id="stepSource">
-          <div class="step-head">
-            <span class="step-badge">1</span>
-            <h2>选择源目录</h2>
-          </div>
-
-          <div class="field">
-            <label for="rootPath">
-              源目录路径（含类别的剧集目录，或含多个编号剧集的父目录）
-            </label>
-            <div class="row">
-              <input id="rootPath" class="text-input" type="text"
-                     placeholder="例如 D:\A英语剧 或 D:\A英语剧\103627">
-              <button id="scanBtn" class="btn btn-primary">扫描结构</button>
-            </div>
-          </div>
-
-          <div class="field">
-            <label for="titleMap">
-              剧名映射表（支持多行）：从 Excel 直接粘贴即可，兼容表头行、列顺序、多余列
-            </label>
-            <textarea id="titleMap" class="text-area" rows="7"
-                      placeholder="剧名	编号&#10;Sie hielten mich für ersetzbar	103622&#10;Ils me croyaient remplaçable	103623&#10;365天	103624"></textarea>
-            <div id="parseMsg" class="hint"></div>
-            <div id="titleTable" class="title-table"></div>
-          </div>
-
-          <div id="scanMsg" class="msg"></div>
-        </section>
-
-        <!-- 步骤 2：重组预览 -->
-        <section class="step hidden" id="stepPreview">
-          <div class="step-head">
-            <span class="step-badge">2</span>
-            <h2>重组预览</h2>
-          </div>
-
-          <div class="preview-bar">
-            <div id="modeInfo" class="mode-info"></div>
-            <div class="actions-inline">
-              <button id="selectAllBtn" class="btn btn-small">全选</button>
-              <button id="selectNoneBtn" class="btn btn-small">全不选</button>
-              <span id="unitCount" class="count"></span>
-            </div>
-          </div>
-
-          <div id="unitArea" class="unit-area"></div>
-
-          <div class="actions">
-            <button id="executeBtn" class="btn btn-primary" disabled>执行重组</button>
-          </div>
-          <div id="execMsg" class="msg"></div>
-        </section>
-
-        <!-- 步骤 3：执行报告 -->
-        <section class="step hidden" id="stepReport">
-          <div class="step-head">
-            <span class="step-badge">3</span>
-            <h2>执行报告</h2>
-          </div>
-
-          <div class="progress-wrap">
-            <div class="progress-info">
-              <span id="progressText" class="loading">准备中…</span>
-              <span id="progressCount" class="count">已复制 0 个</span>
-            </div>
-            <div class="progress-bar">
-              <div id="progressFill" class="progress-fill"></div>
-            </div>
-            <div id="progressPath" class="progress-path"></div>
-          </div>
-
-          <div id="reportArea" class="report-area"></div>
-        </section>
-
-      </div>
-    </div>
-  </main>
-
-  <!-- 冲突确认弹窗 -->
-  <div id="conflictModal" class="rz-modal hidden">
-    <div class="modal-box">
-      <h3>目标文件夹已存在</h3>
-      <p>以下父文件夹已存在于源目录同级，请选择处理方式：</p>
-      <ul id="conflictList" class="conflict-list"></ul>
-      <div class="modal-actions">
-        <button id="conflictSkip" class="btn">跳过已存在的</button>
-        <button id="conflictOverwrite" class="btn btn-danger">覆盖（先删除再写入）</button>
-        <button id="conflictCancel" class="btn btn-ghost">取消</button>
-      </div>
-    </div>
-  </div>
-
-  <script src="reorganize-app.js?v=1"></script>
-</body>
-</html>
+<!DOCTYPE html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<html lang="zh-CN">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<head>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <meta charset="UTF-8" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <title>语种重组 · 字幕工具箱</title>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <link rel="stylesheet" href="style.css?v=20261027-1144" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <link rel="stylesheet" href="reorganize.css?v=20261027-1144" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</head>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<body>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <div class="bg-layer" aria-hidden="true"></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <header class="hud-top">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <a href="index.html" class="brand">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <span class="brand-mark" aria-hidden="true">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="1.5" rx=".5" fill="#fafffd"/><rect x="2" y="7.25" width="9" height="1.5" rx=".5" fill="#fafffd" opacity=".9"/><rect x="2" y="10.5" width="11" height="1.5" rx=".5" fill="#fafffd" opacity=".75"/></svg>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      </span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      字幕工具箱
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    </a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <nav class="hud-nav">
+
+
+
+
+      <a href="index.html">首页</a>
+
+
+
+
+      <div class="nav-group active-wrap">
+
+
+
+
+        <a class="group-btn active" href="javascript:void(0)">标准流程</a>
+
+
+
+
+        <div class="dropdown">
+
+
+
+
+          <a href="preprocess.html">1. 预处理</a>
+
+
+
+
+          <a href="reorganize.html" class="active">2. 语种重组</a>
+
+
+
+
+          <a href="replace.html">3. 术语替换</a>
+
+
+
+
+          <a href="fix.html">4. SRT 修复</a>
+
+
+
+
+          <a href="flatten.html">5. 目录平铺</a>
+
+
+
+
+        </div>
+
+
+
+
+      </div>
+
+
+
+
+      <div class="nav-group">
+
+
+
+
+        <a class="group-btn" href="javascript:void(0)">辅助工具</a>
+
+
+
+
+        <div class="dropdown">
+
+
+
+
+          <a href="align.html">跨语言对齐</a>
+
+
+
+
+          <a href="identify.html">术语识别</a>
+
+
+
+
+          <a href="rename.html">重命名同步</a>
+
+
+
+
+          <a href="jianying.html">剪映草稿</a>
+
+
+
+
+          <a href="role_sheet.html">角色表转换</a>
+
+
+
+
+        </div>
+
+
+
+
+      </div>
+
+
+
+
+    </nav>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  </header>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <main class="hud-main">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <h1 class="page-title">语种重组</h1>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <p class="page-sub">按类别组织 → 按语种组织 · 源文件只读，全部为复制；输出到源目录同级（需本地后端运行）</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div id="rz-root">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <div class="layout">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <!-- 步骤 1：选择源目录 -->
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <section class="step" id="stepSource">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <div class="step-head">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            <span class="step-badge">1</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            <h2>选择源目录</h2>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <div class="field">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            <label for="rootPath">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+              源目录路径（含类别的剧集目录，或含多个编号剧集的父目录）
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            </label>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            <div class="row">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+              <input id="rootPath" class="text-input" type="text"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                     placeholder="例如 D:\A英语剧 或 D:\A英语剧\103627">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+              <button id="scanBtn" class="btn btn-primary">扫描结构</button>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <div class="field">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            <label for="titleMap">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+              剧名映射表（支持多行）：从 Excel 直接粘贴即可，兼容表头行、列顺序、多余列
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            </label>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            <textarea id="titleMap" class="text-area" rows="7"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                      placeholder="剧名	编号&#10;Sie hielten mich für ersetzbar	103622&#10;Ils me croyaient remplaçable	103623&#10;365天	103624"></textarea>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            <div id="parseMsg" class="hint"></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            <div id="titleTable" class="title-table"></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <div id="scanMsg" class="msg"></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        </section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <!-- 步骤 2：重组预览 -->
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <section class="step hidden" id="stepPreview">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <div class="step-head">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            <span class="step-badge">2</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            <h2>重组预览</h2>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <div class="preview-bar">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            <div id="modeInfo" class="mode-info"></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            <div class="actions-inline">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+              <button id="selectAllBtn" class="btn btn-small">全选</button>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+              <button id="selectNoneBtn" class="btn btn-small">全不选</button>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+              <span id="unitCount" class="count"></span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <div id="unitArea" class="unit-area"></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <div class="actions">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            <button id="executeBtn" class="btn btn-primary" disabled>执行重组</button>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <div id="execMsg" class="msg"></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        </section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <!-- 步骤 3：执行报告 -->
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <section class="step hidden" id="stepReport">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <div class="step-head">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            <span class="step-badge">3</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            <h2>执行报告</h2>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <div class="progress-wrap">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            <div class="progress-info">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+              <span id="progressText" class="loading">准备中…</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+              <span id="progressCount" class="count">已复制 0 个</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            <div class="progress-bar">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+              <div id="progressFill" class="progress-fill"></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            <div id="progressPath" class="progress-path"></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <div id="reportArea" class="report-area"></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        </section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  </main>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <!-- 冲突确认弹窗 -->
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <div id="conflictModal" class="rz-modal hidden">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="modal-box">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <h3>目标文件夹已存在</h3>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <p>以下父文件夹已存在于源目录同级，请选择处理方式：</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <ul id="conflictList" class="conflict-list"></ul>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <div class="modal-actions">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <button id="conflictSkip" class="btn">跳过已存在的</button>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <button id="conflictOverwrite" class="btn btn-danger">覆盖（先删除再写入）</button>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <button id="conflictCancel" class="btn btn-ghost">取消</button>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <script src="reorganize-app.js?v=20261027-1144"></script>
+
+
+
+
+<script>
+
+
+
+
+// 导航分组下拉：点 group-btn 展开/收起，点外部自动关闭
+
+
+
+
+(function(){
+
+
+
+
+  document.querySelectorAll('.hud-nav .group-btn').forEach(btn => {
+
+
+
+
+    btn.addEventListener('click', e => {
+
+
+
+
+      e.preventDefault(); e.stopPropagation();
+
+
+
+
+      document.querySelectorAll('.hud-nav .nav-group').forEach(g => {
+
+
+
+
+        if (g !== btn.parentElement) g.classList.remove('open');
+
+
+
+
+      });
+
+
+
+
+      btn.parentElement.classList.toggle('open');
+
+
+
+
+    });
+
+
+
+
+  });
+
+
+
+
+  document.addEventListener('click', () => {
+
+
+
+
+    document.querySelectorAll('.hud-nav .nav-group.open').forEach(g => g.classList.remove('open'));
+
+
+
+
+  });
+
+
+
+
+})();
+
+
+
+
+</script>
+
+
+
+
+</body>
+
+
+
+
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+

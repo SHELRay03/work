@@ -1,0 +1,4510 @@
+<!DOCTYPE html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<html lang="zh-CN">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<head>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <meta charset="UTF-8" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <title>角色表转换 · 字幕工具箱</title>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <link rel="stylesheet" href="style.css?v=20261027-1144" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <style>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    #rs-root { max-width: 760px; margin: 0 auto; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    #rs-root .run-btn { width: 100%; padding: 0.75rem; font-size: 0.95rem; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    #rs-root #report { margin-top: 1rem; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    #rs-root .report-box {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      background: rgba(255, 255, 255, 0.72);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      border: 1px solid var(--line, rgba(47, 143, 110, 0.22));
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      border-radius: var(--radius, 10px);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      padding: 0.9rem 1rem;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      margin-bottom: 0.8rem;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      font-size: 0.85rem;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    #rs-root .report-box h3 { margin: 0 0 0.4rem; font-size: 0.88rem; color: var(--mint-deep, #2f8f6e); }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    #rs-root .report-meta { color: var(--text-muted, #4d6b5f); font-size: 0.8rem; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    #rs-root .col-chip {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      display: inline-block; margin: 2px 3px 2px 0; padding: 2px 8px;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      background: rgba(94, 201, 160, 0.12); border: 1px solid var(--line, rgba(47, 143, 110, 0.22));
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      border-radius: 20px; font-size: 0.76rem; color: var(--mint-deep, #2f8f6e);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    #rs-root .saved-path {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      margin-top: 0.4rem; padding: 0.5rem 0.75rem;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      background: rgba(94, 201, 160, 0.1); border: 1px solid var(--line, rgba(47, 143, 110, 0.22));
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      border-radius: 6px; font-size: 0.78rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      color: var(--mint-deep, #2f8f6e); word-break: break-all;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    #rs-root .preview-table {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      width: 100%; border-collapse: collapse; margin-top: 0.6rem; font-size: 0.78rem;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      background: rgba(255,255,255,0.6); border-radius: 6px; overflow: hidden;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    #rs-root .preview-table th, #rs-root .preview-table td {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      padding: 6px 10px; border-bottom: 1px solid var(--line, rgba(47,143,110,0.15));
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      text-align: left; vertical-align: top;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    #rs-root .preview-table th { background: rgba(94,201,160,0.15); font-weight: 600; color: var(--mint-deep, #2f8f6e); }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    #rs-root .preview-table tr:last-child td { border-bottom: none; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    #rs-root .preview-table td.target, #rs-root .preview-table td.intro {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      color: var(--text-muted, #4d6b5f); font-style: italic;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    #rs-root .btn-row { display: flex; gap: 0.5rem; margin-top: 0.4rem; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    #rs-root .btn-row .btn-primary { flex: 1; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    #rs-root .btn-row .btn-ghost { flex: 0 0 auto; }
+    #rs-root .path-picker { display: flex; gap: 0.45rem; align-items: stretch; }
+    #rs-root .path-picker input { flex: 1; min-width: 0; }
+    #rs-root .picker-btn {
+      flex: 0 0 auto; min-width: 5rem; padding: 0.35rem 0.7rem;
+      border: 1px solid var(--line-strong, #c9d1cc); border-radius: var(--radius, 6px);
+      background: white; color: var(--mint-deep, #2f8f6e); font-size: 0.82rem;
+      cursor: pointer; transition: border-color 0.15s;
+    }
+    #rs-root .picker-btn:hover { border-color: var(--mint, #3ba584); }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  </style>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</head>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<body>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <div class="bg-layer" aria-hidden="true"></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <header class="hud-top">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <a href="index.html" class="brand">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <span class="brand-mark" aria-hidden="true">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="1.5" rx=".5" fill="#fafffd"/><rect x="2" y="7.25" width="9" height="1.5" rx=".5" fill="#fafffd" opacity=".9"/><rect x="2" y="10.5" width="11" height="1.5" rx=".5" fill="#fafffd" opacity=".75"/></svg>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      </span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      字幕工具箱
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    </a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <nav class="hud-nav">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <a href="index.html">首页</a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <div class="nav-group">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <a class="group-btn" href="javascript:void(0)">标准流程</a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <div class="dropdown">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <a href="preprocess.html">1. 预处理</a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <a href="reorganize.html">2. 语种重组</a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <a href="replace.html">3. 术语替换</a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <a href="fix.html">4. SRT 修复</a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <a href="flatten.html">5. 目录平铺</a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <div class="nav-group active-wrap">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <a class="group-btn active" href="javascript:void(0)">辅助工具</a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <div class="dropdown">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <a href="align.html">跨语言对齐</a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <a href="rename.html">重命名同步</a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <a href="jianying.html">剪映草稿</a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <a href="role_sheet.html" class="active">角色表转换</a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    </nav>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  </header>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <main class="hud-main">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <h1 class="page-title">角色表格式转换</h1>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <p class="page-sub">把原始角色表重映射为翻译用模板，并自动在每条角色后留出空白行。</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div id="rs-root">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <section class="panel">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <div class="panel-head"><span class="panel-dot"></span><h2>1. 上传角色表</h2></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <p class="hint">支持 xlsx 与 csv。列名自动识别：Gender / Name (zh) / Name (en) / Description (zh)；也兼容中文列名（性别 / 中文名 / 英文名 / 简介）。</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <div class="field">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <label for="xlsxInput">选择文件</label>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <input id="xlsxInput" type="file" accept=".xlsx,.xls,.csv" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <div class="hint" id="xlsxInfo">未选择</div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      </section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <section class="panel">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <div class="panel-head"><span class="panel-dot"></span><h2>2. 参数设置</h2></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <div class="field">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <label for="sheetName">工作表名</label>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <input id="sheetName" type="text" value="本地化清单" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <div class="hint">默认「本地化清单」，可随意修改。</div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <div class="field">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <label for="blankRows">每条角色后追加空行数</label>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <input id="blankRows" type="number" min="0" max="30" value="5" style="width: 80px;" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <div class="hint">默认 5 行；用于在 Excel 里留空让你手动补充文案。</div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <div class="field">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <label for="outputPath">导出文件夹</label>
+
+
+          <div class="path-picker">
+            <input id="outputPath" type="text" placeholder="点击「选择…」弹出文件夹选择；留空则浏览器下载" />
+            <button type="button" class="btn-ghost picker-btn" data-target="outputPath">选择…</button>
+          </div>
+
+
+          <div class="hint">选择文件夹后保存为「工作表名.xlsx」，不再弹浏览器下载；同名文件会先询问是否覆盖。</div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      </section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <section class="panel">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <div class="panel-head"><span class="panel-dot"></span><h2>3. 预览 &amp; 执行</h2></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <div class="btn-row">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <button id="preview" type="button" class="btn-ghost" disabled>🔍 预览前 3 条</button>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <button id="run" type="button" class="btn-primary" disabled>开始转换</button>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <div id="status" class="status"></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <div id="previewBox" hidden></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <div id="report"></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      </section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  </main>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<script>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// 导航分组下拉
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+(function(){
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  document.querySelectorAll('.hud-nav .group-btn').forEach(btn => {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    btn.addEventListener('click', e => {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      e.preventDefault(); e.stopPropagation();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      document.querySelectorAll('.hud-nav .nav-group').forEach(g => {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        if (g !== btn.parentElement) g.classList.remove('open');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      btn.parentElement.classList.toggle('open');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  document.addEventListener('click', () => {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    document.querySelectorAll('.hud-nav .nav-group.open').forEach(g => g.classList.remove('open'));
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+})();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const statusEl = document.getElementById("status");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+function setMsg(text, cls) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  statusEl.className = "status" + (cls ? " " + cls : "");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  statusEl.textContent = text;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const previewBtn = document.getElementById("preview");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const runBtn = document.getElementById("run");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+let fileObj = null;
+
+
+
+
+
+
+
+
+
+// localStorage：输出路径记忆上次值
+(function() {
+  const el = document.getElementById('outputPath');
+  const saved = localStorage.getItem('rs_output_path');
+  if (saved) el.value = saved;
+  el.addEventListener('change', () => localStorage.setItem('rs_output_path', el.value.trim()));
+})();
+
+// 路径选择按钮：调后端弹 Windows 原生文件夹选择框
+(function() {
+  async function pickFolder(targetId) {
+    const input = document.getElementById(targetId);
+    const fd = new FormData();
+    fd.append("title", "选择导出文件夹");
+    fd.append("initial", (input.value || "").trim());
+    try {
+      const resp = await fetch("/api/pick-folder", { method: "POST", body: fd });
+      const data = await resp.json();
+      if (data.ok && data.path) {
+        input.value = data.path;
+        input.dispatchEvent(new Event("change"));  // 触发 localStorage 记忆
+      }
+    } catch (err) {
+      alert("文件夹选择失败：" + err);
+    }
+  }
+  document.querySelectorAll(".picker-btn").forEach(btn => {
+    btn.addEventListener("click", () => pickFolder(btn.dataset.target));
+  });
+})();
+
+// 开始转换按钮绑定（postConvert 为函数声明，存在提升，此处可安全引用）
+runBtn.onclick = () => postConvert(false);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+document.getElementById("xlsxInput").addEventListener("change", e => {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  fileObj = e.target.files?.[0] || null;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  document.getElementById("xlsxInfo").textContent =
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    fileObj ? `已选择 ${fileObj.name}（${(fileObj.size / 1024).toFixed(1)} KB）` : "未选择";
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const ok = !!fileObj;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  previewBtn.disabled = !ok;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  runBtn.disabled = !ok;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  document.getElementById("previewBox").hidden = true;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  document.getElementById("report").innerHTML = "";
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+function buildFormData(extras = {}) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const fd = new FormData();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  fd.append("xlsx", fileObj);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  fd.append("blank_rows", parseInt(document.getElementById("blankRows").value, 10) || 5);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  fd.append("sheet_name", document.getElementById("sheetName").value.trim() || "本地化清单");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  for (const [k, v] of Object.entries(extras)) fd.append(k, v);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const outPath = document.getElementById("outputPath").value.trim();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  if (outPath && !extras.preview_only) fd.append("output_path", outPath);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  return fd;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+function renderPreview(rows) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const box = document.getElementById("previewBox");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  if (!rows || rows.length === 0) { box.hidden = true; return; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const table =
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    `<table class="preview-table"><thead><tr>` +
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    `<th style="width:40px">性别</th><th style="width:120px">Source</th>` +
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    `<th style="width:120px">Target</th><th style="width:120px">Intro</th>` +
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    `<th>Profile</th>` +
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    `</tr></thead><tbody>` +
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    rows.map(r =>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      `<tr>` +
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      `<td>${r.gender || ''}</td>` +
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      `<td>${r.source || ''}</td>` +
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      `<td class="target">${r.target || '(留空)'}</td>` +
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      `<td class="intro">${r.intro || '(留空)'}</td>` +
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      `<td>${r.profile || ''}</td>` +
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      `</tr>`
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    ).join('') +
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    `</tbody></table>`;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  box.innerHTML = table;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  box.hidden = false;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+previewBtn.onclick = async () => {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  if (!fileObj) return;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const reportEl = document.getElementById("report");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  previewBtn.disabled = true; reportEl.innerHTML = "";
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  setMsg("正在解析文件…", "loading");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  try {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    const fd = buildFormData({ preview_only: "true" });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    const resp = await fetch("/api/role-sheet/convert", { method: "POST", body: fd });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    const data = await resp.json();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    if (data && data.confirm_needed) {
+      const tgt = (data.existing && data.existing[0]) || "目标文件";
+      if (confirm("目标文件已存在，覆盖吗？\n\n" + tgt)) { postConvert(true); } else { setMsg("已取消（未覆盖任何文件）", "warn"); }
+      return;
+    }
+    if (!resp.ok || !data.ok) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      setMsg("失败：" + (data.msg || resp.statusText), "err");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      return;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    const r = data.report || {};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    renderPreview(r.preview);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    const colChips = Object.entries(r.columns_detected || {})
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      .map(([k, v]) => `<span class="col-chip">${k} → 第 ${v} 列</span>`).join("");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    reportEl.innerHTML =
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      `<div class="report-box">` +
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      `<h3>📋 预览成功</h3>` +
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      `<div class="report-meta">识别角色 <b>${r.written}</b> 条 · 跳过空行 ${r.skipped_blank_rows} · 每条追加 ${r.blank_rows_between} 行空白</div>` +
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      `<div style="margin-top:0.5rem"><b>列识别：</b>${colChips || "(无)"}</div>` +
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      `</div>`;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    setMsg("预览完成，确认无误后点击「开始转换」", "ok");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  } catch (err) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    setMsg("网络错误：" + err.message, "err");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  } finally {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    previewBtn.disabled = false;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+async function postConvert(force) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  if (!fileObj) { setMsg("请先选择文件", "warn"); return; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const blankRows = parseInt(document.getElementById("blankRows").value, 10);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  if (isNaN(blankRows) || blankRows < 0) { setMsg("空行数需是非负整数", "warn"); return; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  runBtn.disabled = true;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  document.getElementById("report").innerHTML = "";
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  setMsg("转换中…", "loading");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  try {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    const fd = buildFormData(force ? { force: "true" } : {});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    const resp = await fetch("/api/role-sheet/convert", { method: "POST", body: fd });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    const data = await resp.json();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    if (data && data.confirm_needed) {
+      const tgt = (data.existing && data.existing[0]) || "目标文件";
+      if (confirm("目标文件已存在，覆盖吗？\n\n" + tgt)) { postConvert(true); } else { setMsg("已取消（未覆盖任何文件）", "warn"); }
+      return;
+    }
+    if (!resp.ok || !data.ok) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      setMsg("失败：" + (data.msg || resp.statusText), "err");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      return;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    const r = data.report || {};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    const colChips = Object.entries(r.columns_detected || {})
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      .map(([k, v]) => `<span class="col-chip">${k} → 第 ${v} 列</span>`).join("");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    let msgBody =
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      `<div class="report-box">` +
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      `<h3>✅ 转换完成</h3>` +
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      `<div class="report-meta">源格式 <b>${r.source_format}</b> · 目标工作表 <b>${r.sheet_name}</b> · 角色 ${r.written} 条 · 跳过空行 ${r.skipped_blank_rows} · 每条后追加 ${r.blank_rows_between} 行空白</div>` +
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      `<div style="margin-top:0.5rem"><b>列识别：</b>${colChips || "(无)"}</div>` +
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      `</div>`;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    if (data.saved_path) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      msgBody += `<div class="report-box">💾 已保存到后端指定路径：<div class="saved-path">${data.saved_path}</div></div>`;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      setMsg("转换完成，文件已落盘", "ok");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    } else if (data.xlsx_base64) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      const blob = base64ToBlob(data.xlsx_base64);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      triggerBrowserDownload(blob, data.download_name || `${r.sheet_name}.xlsx`);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      setMsg("已触发浏览器下载", "ok");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    document.getElementById("report").innerHTML = msgBody;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  } catch (err) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    setMsg("网络错误：" + err.message, "err");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  } finally {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    runBtn.disabled = false;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+function base64ToBlob(b64) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const binary = atob(b64);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const bytes = new Uint8Array(binary.length);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  return new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+function triggerBrowserDownload(blob, filename) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const url = URL.createObjectURL(blob);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const a = document.createElement("a");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  a.href = url;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  a.download = filename;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  document.body.appendChild(a);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  a.click();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  document.body.removeChild(a);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</script>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</body>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+

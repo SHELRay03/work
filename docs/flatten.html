@@ -1,487 +1,7315 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>目录平铺 · 字幕工具箱</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
-  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="style.css?v=19" />
-</head>
-<body>
-  <div class="bg-layer" aria-hidden="true"></div>
-
-  <header class="hud-top">
-    <a href="index.html" class="brand">
-      <span class="brand-mark" aria-hidden="true">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="1.5" rx=".5" fill="#fafffd"/><rect x="2" y="7.25" width="9" height="1.5" rx=".5" fill="#fafffd" opacity=".9"/><rect x="2" y="10.5" width="11" height="1.5" rx=".5" fill="#fafffd" opacity=".75"/></svg>
-      </span>
-      字幕工具箱
-    </a>
-    <nav class="hud-nav">
-      <a href="index.html">首页</a>
-      <a href="preprocess.html">预处理</a>
-      <a href="reorganize.html">语种重组</a>
-      <a href="replace.html">术语替换</a>
-      <a href="fix.html">SRT 修复</a>
-      <a href="flatten.html" class="active">目录平铺</a>
-      <span class="nav-sep"></span>
-      <a href="align.html">跨语言对齐</a>
-      <a href="rename.html">重命名同步</a>
-      <a href="jianying.html">剪映草稿</a>
-    </nav>
-  </header>
-
-  <main class="hud-main">
-    <h1 class="page-title">目录平铺</h1>
-    <p class="page-sub">将嵌套子文件夹中的文件全部平铺到根目录，自动跳过同名冲突并清理空目录。支持多个根目录累积，分别独立平铺。</p>
-
-    <section class="panel">
-      <div class="panel-head"><span class="panel-dot"></span><h2>1. 选择根目录（可多个）</h2></div>
-      <p class="panel-sub">点击「添加文件夹」逐个累积，或直接拖入多个文件夹一次性加入。每个根目录独立扫描、独立预览、独立执行。</p>
-      <div class="drop-zone" id="pickDrop">
-        <div class="dz-inner">
-          <div class="dz-icon">📁</div>
-          <div id="pickText">点击添加文件夹，或直接拖入一个或多个文件夹</div>
-          <div class="dz-hint">仅支持 Chrome/Edge；操作将修改原目录，请确保已备份</div>
-        </div>
-      </div>
-      <div class="actions">
-        <button type="button" id="btnAdd" class="btn-ghost">添加文件夹</button>
-        <button type="button" id="btnClear" class="btn-ghost" hidden>清空列表</button>
-        <button type="button" id="btnExecAll" class="btn-primary" hidden>全部执行</button>
-      </div>
-      <div class="status" id="statusPick"></div>
-      <div id="rootList"></div>
-    </section>
-
-    <section class="panel" id="reportPanel" hidden>
-      <div class="panel-head"><span class="panel-dot"></span><h2>2. 执行报告</h2></div>
-      <div id="reportContent"></div>
-    </section>
-  </main>
-
-<script src="utils.js?v=13"></script>
-<script>
-// =============================================================
-// 目录平铺 — 独立页面（多根目录版）
-// 使用 File System Access API 原地移动文件，仅 Chrome/Edge
-// =============================================================
-
-const state = {
-  roots: [],          // [{ handle, plan, status: 'pending'|'done'|'error', error }]
-};
-
-const pickDrop      = document.getElementById('pickDrop');
-const pickText      = document.getElementById('pickText');
-const statusPick    = document.getElementById('statusPick');
-const rootList      = document.getElementById('rootList');
-const btnAdd        = document.getElementById('btnAdd');
-const btnClear      = document.getElementById('btnClear');
-const btnExecAll    = document.getElementById('btnExecAll');
-const reportPanel   = document.getElementById('reportPanel');
-const reportContent = document.getElementById('reportContent');
-
-// 浏览器支持检查
-if (!window.showDirectoryPicker) {
-  pickText.textContent = '当前浏览器不支持目录平铺';
-  pickDrop.style.opacity = '0.5';
-  pickDrop.style.cursor = 'not-allowed';
-  statusPick.className = 'status err';
-  statusPick.textContent = '请使用 Chrome/Edge 浏览器，需要 File System Access API 支持。';
-}
-
-// ------- 使用某个根目录 handle（点击/拖拽共用，累积到 state.roots） -------
-async function useRootHandle(handle) {
-  if (!handle || handle.kind !== 'directory') {
-    statusPick.className = 'status err';
-    statusPick.textContent = '请提供文件夹（而非单个文件）';
-    return;
-  }
-  // 去重：同一 handle 不重复加入
-  if (state.roots.some(r => r.handle === handle)) {
-    statusPick.className = 'status';
-    statusPick.textContent = `「${handle.name}」已在列表中，已跳过`;
-    return;
-  }
-  // 请求读写权限
-  const perm = await handle.requestPermission?.({ mode: 'readwrite' });
-  if (perm && perm !== 'granted') {
-    statusPick.className = 'status err';
-    statusPick.textContent = `未授权「${handle.name}」读写权限，已跳过`;
-    return;
-  }
-  const root = { handle, plan: null, status: 'pending', error: null };
-  state.roots.push(root);
-  renderRootList();
-  statusPick.className = 'status loading';
-  statusPick.textContent = `已加入「${handle.name}」，扫描中…`;
-  try {
-    const plan = await scanAndPreview(handle);
-    root.plan = plan;
-    renderRootList();
-    statusPick.className = 'status ok';
-    statusPick.textContent = `「${handle.name}」扫描完成`;
-  } catch (e) {
-    root.status = 'error';
-    root.error = e.message;
-    renderRootList();
-    statusPick.className = 'status err';
-    statusPick.textContent = `「${handle.name}」扫描失败：${e.message}`;
-  }
-}
-
-// ------- 点击「添加文件夹」 -------
-btnAdd.addEventListener('click', async () => {
-  if (!window.showDirectoryPicker) return;
-  try {
-    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
-    await useRootHandle(handle);
-  } catch (e) {
-    if (e.name === 'AbortError') {
-      statusPick.className = 'status';
-      statusPick.textContent = '已取消选择';
-    } else {
-      statusPick.className = 'status err';
-      statusPick.textContent = '选择目录失败：' + e.message;
-    }
-  }
-});
-
-// ------- 拖拽（支持多个文件夹一次性加入） -------
-['dragenter', 'dragover'].forEach(evt => {
-  pickDrop.addEventListener(evt, (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    pickDrop.classList.add('dz-hover');
-  });
-});
-['dragleave', 'drop'].forEach(evt => {
-  pickDrop.addEventListener(evt, (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    pickDrop.classList.remove('dz-hover');
-  });
-});
-pickDrop.addEventListener('drop', async (e) => {
-  if (!window.showDirectoryPicker) return;
-  const items = e.dataTransfer?.items;
-  if (!items || items.length === 0) return;
-  try {
-    const dirHandles = [];
-    // 先收集所有 directory handle
-    for (const item of items) {
-      const getHandle = item.getAsFileSystemHandle ? item.getAsFileSystemHandle() : null;
-      if (!getHandle) continue;
-      const handle = await getHandle;
-      if (handle && handle.kind === 'directory') dirHandles.push(handle);
-    }
-    if (dirHandles.length === 0) {
-      statusPick.className = 'status err';
-      statusPick.textContent = '请拖入文件夹，而非单个文件';
-      return;
-    }
-    statusPick.className = 'status loading';
-    statusPick.textContent = `正在加入 ${dirHandles.length} 个根目录…`;
-    for (const h of dirHandles) await useRootHandle(h);
-  } catch (err) {
-    statusPick.className = 'status err';
-    statusPick.textContent = '拖入目录失败：' + (err.message || err.name);
-  }
-});
-
-// ------- 清空列表 -------
-btnClear.addEventListener('click', () => {
-  state.roots = [];
-  renderRootList();
-  reportPanel.hidden = true;
-  btnClear.hidden = true;
-  btnExecAll.hidden = true;
-  statusPick.className = 'status';
-  statusPick.textContent = '已清空列表';
-});
-
-// ------- 递归扫描 -------
-async function scanAndPreview(rootHandle) {
-  const toMove = [];
-  const allDirs = [];
-  const rootFiles = [];
-
-  async function walk(dirHandle, parentDir, path, depth) {
-    if (depth >= 1) allDirs.push({ handle: dirHandle, parentDir, name: dirHandle.name, depth, path });
-    for await (const entry of dirHandle.values()) {
-      if (entry.kind === 'file') {
-        if (depth === 0) {
-          rootFiles.push(entry.name);
-        } else {
-          toMove.push({ handle: entry, parentDir: dirHandle, name: entry.name, fromPath: path + '/' + entry.name, depth });
-        }
-      } else if (entry.kind === 'directory') {
-        await walk(entry, dirHandle, path + '/' + entry.name, depth + 1);
-      }
-    }
-  }
-  await walk(rootHandle, null, '', 0);
-
-  // 同名冲突检测
-  const usedNames = new Set(rootFiles);
-  const conflicts = [];
-  const uniqueToMove = [];
-  for (const f of toMove) {
-    if (usedNames.has(f.name)) {
-      conflicts.push({ name: f.name, fromPath: f.fromPath });
-    } else {
-      uniqueToMove.push(f);
-      usedNames.add(f.name);
-    }
-  }
-
-  return { rootName: rootHandle.name, rootFiles, toMove: uniqueToMove, conflicts, allDirs };
-}
-
-// ------- 渲染根目录列表（每个一个卡片） -------
-function renderRootList() {
-  if (state.roots.length === 0) {
-    rootList.innerHTML = '';
-    btnClear.hidden = true;
-    btnExecAll.hidden = true;
-    return;
-  }
-  btnClear.hidden = false;
-  const hasPending = state.roots.some(r => r.status === 'pending' && r.plan);
-  btnExecAll.hidden = !hasPending;
-
-  rootList.innerHTML = state.roots.map((r, i) => {
-    const plan = r.plan;
-    const summary = plan
-      ? `已有 ${plan.rootFiles.length} · 移动 ${plan.toMove.length} · 冲突跳过 ${plan.conflicts.length} · 删空 ${plan.allDirs.length}`
-      : (r.status === 'error' ? `错误：${escapeHtml(r.error || '')}` : '扫描中…');
-    const cls = r.status === 'done' ? 'root-card done'
-      : r.status === 'error' ? 'root-card err'
-      : 'root-card';
-    const actionBtn = plan
-      ? `<button type="button" class="btn-ghost root-exec" data-idx="${i}">执行</button>
-         <button type="button" class="btn-ghost root-remove" data-idx="${i}">移除</button>`
-      : '';
-    return `<div class="${cls}">
-      <div class="root-head">
-        <span class="root-name">📁 ${escapeHtml(r.handle.name)}</span>
-        <span class="root-summary">${summary}</span>
-        <span class="root-actions">${actionBtn}</span>
-      </div>
-      ${plan ? renderPlanPreview(plan, i) : ''}
-    </div>`;
-  }).join('');
-
-  // 绑定按钮
-  rootList.querySelectorAll('.root-exec').forEach(btn => {
-    btn.onclick = () => executeOne(Number(btn.dataset.idx));
-  });
-  rootList.querySelectorAll('.root-remove').forEach(btn => {
-    btn.onclick = () => {
-      const idx = Number(btn.dataset.idx);
-      state.roots.splice(idx, 1);
-      renderRootList();
-      if (state.roots.length === 0) {
-        reportPanel.hidden = true;
-        statusPick.className = 'status';
-        statusPick.textContent = '已清空列表';
-      }
-    };
-  });
-}
-
-function renderPlanPreview(plan, idx) {
-  let html = `<div class="root-preview">`;
-  html += section('将移动（' + plan.toMove.length + '）', plan.toMove.map(f =>
-    `<div class="file-item"><span class="file-name">${escapeHtml(f.name)}</span><span class="file-from">← ${escapeHtml(f.fromPath)}</span></div>`).join(''));
-  if (plan.conflicts.length > 0) {
-    html += section('同名冲突跳过（' + plan.conflicts.length + '）', plan.conflicts.map(c =>
-      `<div class="file-item skip"><span class="file-name">${escapeHtml(c.name)}</span><span class="file-from">← ${escapeHtml(c.fromPath)}</span></div>`).join(''), 'warn');
-  }
-  if (plan.allDirs.length > 0) {
-    const dirsByDepth = [...plan.allDirs].sort((a, b) => a.depth - b.depth);
-    html += section('中间目录将尝试删除（' + plan.allDirs.length + '）', dirsByDepth.map(d =>
-      `<div class="file-item dir"><span class="file-name">📁 ${escapeHtml(d.name)}</span><span class="file-from">${escapeHtml(d.path || '/')}</span></div>`).join(''));
-  }
-  html += '</div>';
-  return html;
-}
-
-function section(title, body, modifier) {
-  return `<div class="preview-section${modifier ? ' ' + modifier : ''}">
-    <h4>${title}</h4>
-    <div class="file-list">${body || '<div class="file-empty">无</div>'}</div>
-  </div>`;
-}
-
-// ------- 执行单个根目录平铺 -------
-async function executeOne(idx) {
-  const root = state.roots[idx];
-  if (!root || !root.plan) return;
-  if (root.status === 'done') return;
-  // 禁用该卡片按钮
-  const card = rootList.children[idx];
-  if (card) card.querySelectorAll('button').forEach(b => b.disabled = true);
-  reportPanel.hidden = false;
-  appendReportHeader(root);
-  try {
-    const result = await executeFlatten(root.handle, root.plan);
-    root.status = 'done';
-    appendReportCard(root, result);
-  } catch (e) {
-    root.status = 'error';
-    root.error = e.message;
-    appendReportCard(root, null, e.message);
-  } finally {
-    renderRootList();
-  }
-}
-
-// ------- 全部执行 -------
-btnExecAll.addEventListener('click', async () => {
-  btnExecAll.disabled = true;
-  btnClear.disabled = true;
-  reportPanel.hidden = false;
-  for (let i = 0; i < state.roots.length; i++) {
-    if (state.roots[i].status === 'done') continue;
-    if (!state.roots[i].plan) continue;
-    await executeOne(i);
-  }
-  btnExecAll.disabled = false;
-  btnClear.disabled = false;
-});
-
-async function executeFlatten(rootHandle, plan) {
-  const moved = [];
-  const skipped = [...plan.conflicts];
-  const usedNames = new Set(plan.rootFiles);
-
-  for (const f of plan.toMove) {
-    if (usedNames.has(f.name)) {
-      if (!skipped.find(s => s.fromPath === f.fromPath)) {
-        skipped.push({ name: f.name, fromPath: f.fromPath, error: '同名已存在' });
-      }
-      continue;
-    }
-    try {
-      const newHandle = await rootHandle.getFileHandle(f.name, { create: true });
-      const writable = await newHandle.createWritable();
-      const file = await f.handle.getFile();
-      await writable.write(file);
-      await writable.close();
-      await f.parentDir.removeEntry(f.name);
-      usedNames.add(f.name);
-      moved.push({ name: f.name, fromPath: f.fromPath });
-    } catch (e) {
-      skipped.push({ name: f.name, fromPath: f.fromPath, error: e.message });
-    }
-  }
-
-  // 删空中间目录（深→浅）
-  const dirsByDepth = [...plan.allDirs].sort((a, b) => b.depth - a.depth);
-  const removedDirs = [];
-  const keptDirs = [];
-  for (const d of dirsByDepth) {
-    try {
-      await d.parentDir.removeEntry(d.name);
-      removedDirs.push(d.path);
-    } catch (e) {
-      keptDirs.push(d.path);
-    }
-  }
-
-  return { moved, skipped, removedDirs, keptDirs };
-}
-
-// ------- 报告渲染 -------
-function appendReportHeader(root) {
-  if (!reportContent.querySelector('.report-header')) {
-    reportContent.innerHTML = '<div class="report-header">逐个根目录执行中…</div>';
-  }
-}
-
-function appendReportCard(root, result, errMsg) {
-  const card = document.createElement('div');
-  card.className = 'report-card';
-  if (result) {
-    let html = `<div class="report-summary">📁 ${escapeHtml(root.handle.name)} 平铺完成：移动 ${result.moved.length} 个，跳过 ${result.skipped.length} 个，删除空目录 ${result.removedDirs.length} 个，保留非空目录 ${result.keptDirs.length} 个。</div>`;
-    if (result.moved.length > 0) {
-      html += section('已移动（' + result.moved.length + '）', result.moved.map(m =>
-        `<div class="file-item ok"><span class="file-name">${escapeHtml(m.name)}</span><span class="file-from">← ${escapeHtml(m.fromPath)}</span></div>`).join(''));
-    }
-    if (result.skipped.length > 0) {
-      html += section('已跳过（' + result.skipped.length + '）', result.skipped.map(s =>
-        `<div class="file-item skip"><span class="file-name">${escapeHtml(s.name)}</span><span class="file-from">← ${escapeHtml(s.fromPath)}</span>${s.error ? `<span class="file-err">${escapeHtml(s.error)}</span>` : ''}</div>`).join(''), 'warn');
-    }
-    if (result.keptDirs.length > 0) {
-      html += section('保留非空目录（' + result.keptDirs.length + '）', result.keptDirs.map(p =>
-        `<div class="file-item dir"><span class="file-name">📁 ${escapeHtml(p.split('/').pop() || '/')}</span><span class="file-from">${escapeHtml(p || '/')}</span></div>`).join(''));
-    }
-    card.innerHTML = html;
-  } else {
-    card.className = 'report-card err';
-    card.innerHTML = `<div class="report-summary">📁 ${escapeHtml(root.handle.name)} 执行失败：${escapeHtml(errMsg || '未知错误')}</div>`;
-  }
-  reportContent.appendChild(card);
-}
-
-</script>
-<style>
-/* 多根目录卡片 */
-.root-card {
-  border: 1px solid var(--line);
-  border-left: 4px solid var(--mint-deep);
-  border-radius: var(--radius);
-  padding: 0.6rem 0.85rem;
-  margin: 0.5rem 0;
-  background: var(--bg-panel);
-}
-.root-card.done { border-left-color: #5a9e72; background: #eaf6ee; }
-.root-card.err  { border-left-color: #d06060; background: #fdecec; }
-.root-head {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-  margin-bottom: 0.4rem;
-}
-.root-name { font-weight: 600; color: var(--text); flex: 0 0 auto; }
-.root-summary { font-size: 0.78rem; color: var(--text-muted); flex: 1 1 auto; }
-.root-actions { display: flex; gap: 0.35rem; flex: 0 0 auto; }
-.root-actions .btn-ghost { padding: 0.2rem 0.6rem; font-size: 0.74rem; }
-.root-preview {
-  border-top: 1px dashed var(--line);
-  padding-top: 0.4rem;
-}
-.root-preview .preview-section { margin: 0.3rem 0; }
-.root-preview h4 {
-  font-size: 0.78rem;
-  margin: 0.2rem 0 0.4rem;
-  color: var(--text-muted);
-  font-weight: 500;
-}
-.root-preview .file-list {
-  max-height: 12rem;
-  overflow-y: auto;
-}
-/* 报告卡片 */
-.report-card {
-  border: 1px solid var(--line);
-  border-left: 4px solid #5a9e72;
-  border-radius: var(--radius);
-  padding: 0.6rem 0.85rem;
-  margin: 0.5rem 0;
-  background: var(--bg-panel);
-}
-.report-card.err { border-left-color: #d06060; background: #fdecec; }
-.report-header {
-  font-weight: 600;
-  margin-bottom: 0.4rem;
-  color: var(--text);
-}
-</style>
-</body>
-</html>
+<!DOCTYPE html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<html lang="zh-CN">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<head>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <meta charset="UTF-8" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <title>目录平铺 · 字幕工具箱</title>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <link rel="stylesheet" href="style.css?v=20261027-1144" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</head>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<body>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <div class="bg-layer" aria-hidden="true"></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <header class="hud-top">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <a href="index.html" class="brand">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <span class="brand-mark" aria-hidden="true">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="1.5" rx=".5" fill="#fafffd"/><rect x="2" y="7.25" width="9" height="1.5" rx=".5" fill="#fafffd" opacity=".9"/><rect x="2" y="10.5" width="11" height="1.5" rx=".5" fill="#fafffd" opacity=".75"/></svg>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      </span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      字幕工具箱
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    </a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <nav class="hud-nav">
+
+
+
+
+      <a href="index.html">首页</a>
+
+
+
+
+      <div class="nav-group active-wrap">
+
+
+
+
+        <a class="group-btn active" href="javascript:void(0)">标准流程</a>
+
+
+
+
+        <div class="dropdown">
+
+
+
+
+          <a href="preprocess.html">1. 预处理</a>
+
+
+
+
+          <a href="reorganize.html">2. 语种重组</a>
+
+
+
+
+          <a href="replace.html">3. 术语替换</a>
+
+
+
+
+          <a href="fix.html">4. SRT 修复</a>
+
+
+
+
+          <a href="flatten.html" class="active">5. 目录平铺</a>
+
+
+
+
+        </div>
+
+
+
+
+      </div>
+
+
+
+
+      <div class="nav-group">
+
+
+
+
+        <a class="group-btn" href="javascript:void(0)">辅助工具</a>
+
+
+
+
+        <div class="dropdown">
+
+
+
+
+          <a href="align.html">跨语言对齐</a>
+
+
+
+
+          <a href="identify.html">术语识别</a>
+
+
+
+
+          <a href="rename.html">重命名同步</a>
+
+
+
+
+          <a href="jianying.html">剪映草稿</a>
+
+
+
+
+          <a href="role_sheet.html">角色表转换</a>
+
+
+
+
+        </div>
+
+
+
+
+      </div>
+
+
+
+
+    </nav>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  </header>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <main class="hud-main">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <h1 class="page-title">目录平铺</h1>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <p class="page-sub">将嵌套子文件夹中的文件全部平铺到根目录，自动跳过同名冲突并清理空目录。支持多个根目录累积，分别独立平铺。</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <section class="panel">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <div class="panel-head"><span class="panel-dot"></span><h2>1. 选择根目录（可多个）</h2></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <p class="panel-sub">点击「添加文件夹」逐个累积，或直接拖入多个文件夹一次性加入。每个根目录独立扫描、独立预览、独立执行。</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <div class="drop-zone" id="pickDrop">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <div class="dz-inner">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <div class="dz-icon">📁</div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <div id="pickText">点击添加文件夹，或直接拖入一个或多个文件夹</div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <div class="dz-hint">仅支持 Chrome/Edge；操作将修改原目录，请确保已备份</div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <div class="actions">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <button type="button" id="btnAdd" class="btn-ghost">添加文件夹</button>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <button type="button" id="btnClear" class="btn-ghost" hidden>清空列表</button>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <button type="button" id="btnExecAll" class="btn-primary" hidden>全部执行</button>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <div class="status" id="statusPick"></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <div id="rootList"></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    </section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <section class="panel" id="reportPanel" hidden>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <div class="panel-head"><span class="panel-dot"></span><h2>2. 执行报告</h2></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <div id="reportContent"></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    </section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  </main>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<script src="utils.js?v=20261027-1144"></script>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<script>
+
+
+
+
+// 导航分组下拉：点 group-btn 展开/收起，点外部自动关闭
+
+
+
+
+(function(){
+
+
+
+
+  document.querySelectorAll('.hud-nav .group-btn').forEach(btn => {
+
+
+
+
+    btn.addEventListener('click', e => {
+
+
+
+
+      e.preventDefault(); e.stopPropagation();
+
+
+
+
+      document.querySelectorAll('.hud-nav .nav-group').forEach(g => {
+
+
+
+
+        if (g !== btn.parentElement) g.classList.remove('open');
+
+
+
+
+      });
+
+
+
+
+      btn.parentElement.classList.toggle('open');
+
+
+
+
+    });
+
+
+
+
+  });
+
+
+
+
+  document.addEventListener('click', () => {
+
+
+
+
+    document.querySelectorAll('.hud-nav .nav-group.open').forEach(g => g.classList.remove('open'));
+
+
+
+
+  });
+
+
+
+
+})();
+
+
+
+
+
+
+
+
+
+// =============================================================
+
+
+
+
+
+
+
+
+
+// 目录平铺 — 独立页面（多根目录版）
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// 使用 File System Access API 原地移动文件，仅 Chrome/Edge
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// =============================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const state = {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  roots: [],          // [{ handle, plan, status: 'pending'|'done'|'error', error }]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const pickDrop      = document.getElementById('pickDrop');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const pickText      = document.getElementById('pickText');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const statusPick    = document.getElementById('statusPick');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const rootList      = document.getElementById('rootList');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const btnAdd        = document.getElementById('btnAdd');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const btnClear      = document.getElementById('btnClear');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const btnExecAll    = document.getElementById('btnExecAll');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const reportPanel   = document.getElementById('reportPanel');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const reportContent = document.getElementById('reportContent');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// 浏览器支持检查
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+if (!window.showDirectoryPicker) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  pickText.textContent = '当前浏览器不支持目录平铺';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  pickDrop.style.opacity = '0.5';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  pickDrop.style.cursor = 'not-allowed';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  statusPick.className = 'status err';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  statusPick.textContent = '请使用 Chrome/Edge 浏览器，需要 File System Access API 支持。';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// ------- 使用某个根目录 handle（点击/拖拽共用，累积到 state.roots） -------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+async function useRootHandle(handle) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  if (!handle || handle.kind !== 'directory') {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    statusPick.className = 'status err';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    statusPick.textContent = '请提供文件夹（而非单个文件）';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    return;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  // 去重：同一 handle 不重复加入
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  if (state.roots.some(r => r.handle === handle)) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    statusPick.className = 'status';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    statusPick.textContent = `「${handle.name}」已在列表中，已跳过`;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    return;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  // 请求读写权限
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const perm = await handle.requestPermission?.({ mode: 'readwrite' });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  if (perm && perm !== 'granted') {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    statusPick.className = 'status err';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    statusPick.textContent = `未授权「${handle.name}」读写权限，已跳过`;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    return;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const root = { handle, plan: null, status: 'pending', error: null };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  state.roots.push(root);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  renderRootList();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  statusPick.className = 'status loading';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  statusPick.textContent = `已加入「${handle.name}」，扫描中…`;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  try {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    const plan = await scanAndPreview(handle);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    root.plan = plan;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    renderRootList();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    statusPick.className = 'status ok';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    statusPick.textContent = `「${handle.name}」扫描完成`;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  } catch (e) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    root.status = 'error';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    root.error = e.message;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    renderRootList();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    statusPick.className = 'status err';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    statusPick.textContent = `「${handle.name}」扫描失败：${e.message}`;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// ------- 点击「添加文件夹」 -------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+btnAdd.addEventListener('click', async () => {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  if (!window.showDirectoryPicker) return;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  try {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    await useRootHandle(handle);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  } catch (e) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    if (e.name === 'AbortError') {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      statusPick.className = 'status';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      statusPick.textContent = '已取消选择';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    } else {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      statusPick.className = 'status err';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      statusPick.textContent = '选择目录失败：' + e.message;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// ------- 拖拽（支持多个文件夹一次性加入） -------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+['dragenter', 'dragover'].forEach(evt => {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  pickDrop.addEventListener(evt, (e) => {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    e.preventDefault();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    e.stopPropagation();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    pickDrop.classList.add('dz-hover');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+['dragleave', 'drop'].forEach(evt => {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  pickDrop.addEventListener(evt, (e) => {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    e.preventDefault();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    e.stopPropagation();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    pickDrop.classList.remove('dz-hover');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+pickDrop.addEventListener('drop', async (e) => {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  if (!window.showDirectoryPicker) return;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const items = e.dataTransfer?.items;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  if (!items || items.length === 0) return;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  try {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    const dirHandles = [];
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    // 先收集所有 directory handle
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    for (const item of items) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      const getHandle = item.getAsFileSystemHandle ? item.getAsFileSystemHandle() : null;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      if (!getHandle) continue;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      const handle = await getHandle;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      if (handle && handle.kind === 'directory') dirHandles.push(handle);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    if (dirHandles.length === 0) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      statusPick.className = 'status err';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      statusPick.textContent = '请拖入文件夹，而非单个文件';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      return;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    statusPick.className = 'status loading';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    statusPick.textContent = `正在加入 ${dirHandles.length} 个根目录…`;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    for (const h of dirHandles) await useRootHandle(h);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  } catch (err) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    statusPick.className = 'status err';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    statusPick.textContent = '拖入目录失败：' + (err.message || err.name);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// ------- 清空列表 -------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+btnClear.addEventListener('click', () => {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  state.roots = [];
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  renderRootList();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  reportPanel.hidden = true;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  btnClear.hidden = true;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  btnExecAll.hidden = true;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  statusPick.className = 'status';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  statusPick.textContent = '已清空列表';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// ------- 递归扫描 -------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+async function scanAndPreview(rootHandle) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const toMove = [];
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const allDirs = [];
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const rootFiles = [];
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  async function walk(dirHandle, parentDir, path, depth) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    if (depth >= 1) allDirs.push({ handle: dirHandle, parentDir, name: dirHandle.name, depth, path });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    for await (const entry of dirHandle.values()) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      if (entry.kind === 'file') {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        if (depth === 0) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          rootFiles.push(entry.name);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        } else {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          toMove.push({ handle: entry, parentDir: dirHandle, name: entry.name, fromPath: path + '/' + entry.name, depth });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      } else if (entry.kind === 'directory') {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        await walk(entry, dirHandle, path + '/' + entry.name, depth + 1);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  await walk(rootHandle, null, '', 0);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  // 同名冲突检测
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const usedNames = new Set(rootFiles);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const conflicts = [];
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const uniqueToMove = [];
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  for (const f of toMove) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    if (usedNames.has(f.name)) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      conflicts.push({ name: f.name, fromPath: f.fromPath });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    } else {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      uniqueToMove.push(f);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      usedNames.add(f.name);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  return { rootName: rootHandle.name, rootFiles, toMove: uniqueToMove, conflicts, allDirs };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// ------- 渲染根目录列表（每个一个卡片） -------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+function renderRootList() {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  if (state.roots.length === 0) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    rootList.innerHTML = '';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    btnClear.hidden = true;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    btnExecAll.hidden = true;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    return;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  btnClear.hidden = false;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const hasPending = state.roots.some(r => r.status === 'pending' && r.plan);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  btnExecAll.hidden = !hasPending;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  rootList.innerHTML = state.roots.map((r, i) => {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    const plan = r.plan;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    const summary = plan
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      ? `已有 ${plan.rootFiles.length} · 移动 ${plan.toMove.length} · 冲突跳过 ${plan.conflicts.length} · 删空 ${plan.allDirs.length}`
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      : (r.status === 'error' ? `错误：${escapeHtml(r.error || '')}` : '扫描中…');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    const cls = r.status === 'done' ? 'root-card done'
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      : r.status === 'error' ? 'root-card err'
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      : 'root-card';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    const actionBtn = plan
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      ? `<button type="button" class="btn-ghost root-exec" data-idx="${i}">执行</button>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+         <button type="button" class="btn-ghost root-remove" data-idx="${i}">移除</button>`
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      : '';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    return `<div class="${cls}">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <div class="root-head">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <span class="root-name">📁 ${escapeHtml(r.handle.name)}</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <span class="root-summary">${summary}</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <span class="root-actions">${actionBtn}</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      ${plan ? renderPlanPreview(plan, i) : ''}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    </div>`;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  }).join('');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  // 绑定按钮
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  rootList.querySelectorAll('.root-exec').forEach(btn => {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    btn.onclick = () => executeOne(Number(btn.dataset.idx));
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  rootList.querySelectorAll('.root-remove').forEach(btn => {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    btn.onclick = () => {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      const idx = Number(btn.dataset.idx);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      state.roots.splice(idx, 1);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      renderRootList();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      if (state.roots.length === 0) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        reportPanel.hidden = true;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        statusPick.className = 'status';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        statusPick.textContent = '已清空列表';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+function renderPlanPreview(plan, idx) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  let html = `<div class="root-preview">`;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  html += section('将移动（' + plan.toMove.length + '）', plan.toMove.map(f =>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    `<div class="file-item"><span class="file-name">${escapeHtml(f.name)}</span><span class="file-from">← ${escapeHtml(f.fromPath)}</span></div>`).join(''));
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  if (plan.conflicts.length > 0) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    html += section('同名冲突跳过（' + plan.conflicts.length + '）', plan.conflicts.map(c =>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      `<div class="file-item skip"><span class="file-name">${escapeHtml(c.name)}</span><span class="file-from">← ${escapeHtml(c.fromPath)}</span></div>`).join(''), 'warn');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  if (plan.allDirs.length > 0) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    const dirsByDepth = [...plan.allDirs].sort((a, b) => a.depth - b.depth);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    html += section('中间目录将尝试删除（' + plan.allDirs.length + '）', dirsByDepth.map(d =>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      `<div class="file-item dir"><span class="file-name">📁 ${escapeHtml(d.name)}</span><span class="file-from">${escapeHtml(d.path || '/')}</span></div>`).join(''));
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  html += '</div>';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  return html;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+function section(title, body, modifier) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  return `<div class="preview-section${modifier ? ' ' + modifier : ''}">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <h4>${title}</h4>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="file-list">${body || '<div class="file-empty">无</div>'}</div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>`;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// ------- 执行单个根目录平铺 -------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+async function executeOne(idx) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const root = state.roots[idx];
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  if (!root || !root.plan) return;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  if (root.status === 'done') return;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  // 禁用该卡片按钮
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const card = rootList.children[idx];
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  if (card) card.querySelectorAll('button').forEach(b => b.disabled = true);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  reportPanel.hidden = false;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  appendReportHeader(root);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  try {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    const result = await executeFlatten(root.handle, root.plan);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    root.status = 'done';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    appendReportCard(root, result);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  } catch (e) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    root.status = 'error';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    root.error = e.message;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    appendReportCard(root, null, e.message);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  } finally {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    renderRootList();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// ------- 全部执行 -------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+btnExecAll.addEventListener('click', async () => {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  btnExecAll.disabled = true;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  btnClear.disabled = true;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  reportPanel.hidden = false;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  for (let i = 0; i < state.roots.length; i++) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    if (state.roots[i].status === 'done') continue;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    if (!state.roots[i].plan) continue;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    await executeOne(i);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  btnExecAll.disabled = false;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  btnClear.disabled = false;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+async function executeFlatten(rootHandle, plan) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const moved = [];
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const skipped = [...plan.conflicts];
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const usedNames = new Set(plan.rootFiles);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  for (const f of plan.toMove) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    if (usedNames.has(f.name)) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      if (!skipped.find(s => s.fromPath === f.fromPath)) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        skipped.push({ name: f.name, fromPath: f.fromPath, error: '同名已存在' });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      continue;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    try {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      const newHandle = await rootHandle.getFileHandle(f.name, { create: true });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      const writable = await newHandle.createWritable();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      const file = await f.handle.getFile();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      await writable.write(file);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      await writable.close();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      await f.parentDir.removeEntry(f.name);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      usedNames.add(f.name);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      moved.push({ name: f.name, fromPath: f.fromPath });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    } catch (e) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      skipped.push({ name: f.name, fromPath: f.fromPath, error: e.message });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  // 删空中间目录（深→浅）
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const dirsByDepth = [...plan.allDirs].sort((a, b) => b.depth - a.depth);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const removedDirs = [];
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const keptDirs = [];
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  for (const d of dirsByDepth) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    try {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      await d.parentDir.removeEntry(d.name);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      removedDirs.push(d.path);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    } catch (e) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      keptDirs.push(d.path);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  return { moved, skipped, removedDirs, keptDirs };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// ------- 报告渲染 -------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+function appendReportHeader(root) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  if (!reportContent.querySelector('.report-header')) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    reportContent.innerHTML = '<div class="report-header">逐个根目录执行中…</div>';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+function appendReportCard(root, result, errMsg) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const card = document.createElement('div');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  card.className = 'report-card';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  if (result) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    let html = `<div class="report-summary">📁 ${escapeHtml(root.handle.name)} 平铺完成：移动 ${result.moved.length} 个，跳过 ${result.skipped.length} 个，删除空目录 ${result.removedDirs.length} 个，保留非空目录 ${result.keptDirs.length} 个。</div>`;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    if (result.moved.length > 0) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      html += section('已移动（' + result.moved.length + '）', result.moved.map(m =>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        `<div class="file-item ok"><span class="file-name">${escapeHtml(m.name)}</span><span class="file-from">← ${escapeHtml(m.fromPath)}</span></div>`).join(''));
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    if (result.skipped.length > 0) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      html += section('已跳过（' + result.skipped.length + '）', result.skipped.map(s =>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        `<div class="file-item skip"><span class="file-name">${escapeHtml(s.name)}</span><span class="file-from">← ${escapeHtml(s.fromPath)}</span>${s.error ? `<span class="file-err">${escapeHtml(s.error)}</span>` : ''}</div>`).join(''), 'warn');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    if (result.keptDirs.length > 0) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      html += section('保留非空目录（' + result.keptDirs.length + '）', result.keptDirs.map(p =>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        `<div class="file-item dir"><span class="file-name">📁 ${escapeHtml(p.split('/').pop() || '/')}</span><span class="file-from">${escapeHtml(p || '/')}</span></div>`).join(''));
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    card.innerHTML = html;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  } else {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    card.className = 'report-card err';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    card.innerHTML = `<div class="report-summary">📁 ${escapeHtml(root.handle.name)} 执行失败：${escapeHtml(errMsg || '未知错误')}</div>`;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  reportContent.appendChild(card);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</script>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<style>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* 多根目录卡片 */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.root-card {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  border: 1px solid var(--line);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  border-left: 4px solid var(--mint-deep);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  border-radius: var(--radius);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  padding: 0.6rem 0.85rem;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  margin: 0.5rem 0;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  background: var(--bg-panel);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.root-card.done { border-left-color: #5a9e72; background: #eaf6ee; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.root-card.err  { border-left-color: #d06060; background: #fdecec; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.root-head {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  display: flex;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  align-items: center;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  gap: 0.6rem;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  flex-wrap: wrap;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  margin-bottom: 0.4rem;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.root-name { font-weight: 600; color: var(--text); flex: 0 0 auto; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.root-summary { font-size: 0.78rem; color: var(--text-muted); flex: 1 1 auto; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.root-actions { display: flex; gap: 0.35rem; flex: 0 0 auto; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.root-actions .btn-ghost { padding: 0.2rem 0.6rem; font-size: 0.74rem; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.root-preview {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  border-top: 1px dashed var(--line);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  padding-top: 0.4rem;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.root-preview .preview-section { margin: 0.3rem 0; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.root-preview h4 {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  font-size: 0.78rem;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  margin: 0.2rem 0 0.4rem;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  color: var(--text-muted);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  font-weight: 500;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.root-preview .file-list {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  max-height: 12rem;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  overflow-y: auto;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* 报告卡片 */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.report-card {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  border: 1px solid var(--line);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  border-left: 4px solid #5a9e72;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  border-radius: var(--radius);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  padding: 0.6rem 0.85rem;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  margin: 0.5rem 0;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  background: var(--bg-panel);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.report-card.err { border-left-color: #d06060; background: #fdecec; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.report-header {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  font-weight: 600;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  margin-bottom: 0.4rem;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  color: var(--text);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</style>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</body>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
