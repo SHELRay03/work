@@ -316,12 +316,46 @@ def default_name(video_dir, subtitle_dir, prefix, mode):
     return "合集"
 
 
+def parse_ep_filter(text):
+    """把集数过滤字符串解析成集合。
+
+    支持格式：
+      "1-20"         → {1..20}
+      "1-5, 10, 20"  → {1,2,3,4,5,10,20}
+      "36, 90"       → {36, 90}
+      空字符串或 None → None（表示全部）
+    非数字段跳过，自动去重。
+    """
+    if not text or not str(text).strip():
+        return None
+    nums = set()
+    for chunk in str(text).replace("，", ",").replace(" ", "").split(","):
+        if "-" in chunk:
+            parts = chunk.split("-")
+            if len(parts) == 2:
+                try:
+                    a, b = int(parts[0]), int(parts[1])
+                    lo, hi = sorted((a, b))
+                    nums.update(range(lo, hi + 1))
+                except ValueError:
+                    pass
+        else:
+            try:
+                nums.add(int(chunk))
+            except ValueError:
+                pass
+    return nums if nums else None
+
+
 def generate(mode, uploads, video_dir, subtitle_dir, draft_folder, name_prefix,
-             subtitle_dir_en="", subtitle_dir_zh=""):
+             subtitle_dir_en="", subtitle_dir_zh="",
+             ep_filter=None):
     """生成剪映草稿。
 
     subtitle_dir_en / subtitle_dir_zh: 显式指定英文/中文字幕文件夹，强制归入对应轨道。
         空字符串则忽略，改用 subtitle_dir + match_lane 模糊匹配。
+    ep_start / ep_end: 集数范围过滤（含两端）。None 表示全部。
+        例如 ep_start=1, ep_end=10 只生成 1~10 集。
     """
     explicit_en = subtitle_dir_en.strip().strip('"')
     explicit_zh = subtitle_dir_zh.strip().strip('"')
@@ -429,10 +463,148 @@ def generate(mode, uploads, video_dir, subtitle_dir, draft_folder, name_prefix,
                 new_items.append(item)
         subs[num] = new_items
 
+    # ===== 集数范围过滤 =====
+    ep_set = parse_ep_filter(ep_filter) if ep_filter else None
+    if ep_set is not None:
+        def _in_set(n):
+            try:
+                return int(n) in ep_set
+            except (TypeError, ValueError):
+                return False
+        videos = {k: v for k, v in videos.items() if _in_set(k)}
+        subs   = {k: v for k, v in subs.items()   if _in_set(k)}
+
     name = default_name(vd, sd, name_prefix, mode)
     result = build_draft(videos, subs, draft_folder or DEFAULT_DRAFT_FOLDER, name)
     result["draft_folder"] = str(draft_folder or DEFAULT_DRAFT_FOLDER)
+    result["ep_filter"] = ep_filter or ""
+    result["ep_filter_count"] = len(ep_set) if ep_set else None
+    result["ep_range"] = {"filter": ep_filter or "",
+                          "matched_count": len(result.get("clips", []))}
     return result
+
+
+def inspect(mode, uploads, video_dir, subtitle_dir,
+            subtitle_dir_en="", subtitle_dir_zh=""):
+    """只扫描目录返回集号列表，不生成草稿。
+
+    返回:
+      {
+        "episodes": [{"num": "1", "has_video": true, "has_sub": true,
+                      "sub_lanes": ["subtitle_en", "subtitle_zh"]}, ...],
+        "video_nums": ["1","2",...],
+        "sub_nums":   ["1","2",...],
+        "matched_nums": ["1","2",...],   // 视频+字幕都有
+        "missing_sub":  ["3",...],       // 有视频无字幕
+        "missing_video":["5",...],       // 有字幕无视频
+        "min_ep": 1, "max_ep": 50,
+      }
+    """
+    explicit_en = subtitle_dir_en.strip().strip('"')
+    explicit_zh = subtitle_dir_zh.strip().strip('"')
+
+    if mode == "path":
+        vd = Path(video_dir.strip().strip('"'))
+        sd = Path(subtitle_dir.strip().strip('"')) if subtitle_dir.strip() else None
+        if not vd.is_dir():
+            return {"error": "视频目录不存在：" + str(vd)}
+        if sd is not None and not sd.is_dir():
+            return {"error": "字幕目录不存在：" + str(sd)}
+        en_dir = Path(explicit_en) if explicit_en else None
+        zh_dir = Path(explicit_zh) if explicit_zh else None
+    else:
+        # upload 模式：和 generate 一样先落盘到 session
+        session = CACHE_DIR / uuid.uuid4().hex[:8]
+        session.mkdir(parents=True, exist_ok=True)
+        def _put(group, rel, fileobj):
+            subdir = {"video": "video", "subtitle": "subtitle",
+                      "subtitle_en": "subtitle_en",
+                      "subtitle_zh": "subtitle_zh"}.get(group, "")
+            dest = session / subdir / safe_rel(rel)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with open(dest, "wb") as fh:
+                shutil.copyfileobj(fileobj, fh)
+        for item in uploads:
+            if len(item) == 3:
+                _put(item[0], item[1], item[2])
+            else:
+                _put("video", item[0], item[1])
+        vd = session / "video"
+        sd = session / "subtitle" if (session / "subtitle").is_dir() else None
+        en_dir = session / "subtitle_en" if (session / "subtitle_en").is_dir() else None
+        zh_dir = session / "subtitle_zh" if (session / "subtitle_zh").is_dir() else None
+        if not vd.is_dir() and not (session / "subtitle").is_dir() \
+                and not en_dir and not zh_dir:
+            vd = sd = session
+            en_dir = zh_dir = None
+
+    dirs = [str(vd)]
+    if sd is not None:
+        dirs.append(str(sd))
+    if en_dir is not None:
+        dirs.append(str(en_dir))
+    if zh_dir is not None:
+        dirs.append(str(zh_dir))
+    videos, subs = {}, {}
+    for d in dirs:
+        v, s = collect_dir(d)
+        merge(videos, v)
+        merge(subs, s)
+
+    # 显式轨标记（和 generate 一样）
+    if en_dir is not None or zh_dir is not None:
+        for num, paths in list(subs.items()):
+            tagged, remaining = [], []
+            for p in paths:
+                low_p = p.replace("\\", "/").lower()
+                if en_dir is not None and str(en_dir).lower().replace("\\", "/") in low_p:
+                    tagged.append(("subtitle_en", p))
+                elif zh_dir is not None and str(zh_dir).lower().replace("\\", "/") in low_p:
+                    tagged.append(("subtitle_zh", p))
+                else:
+                    remaining.append(p)
+            if tagged:
+                subs[num] = remaining + tagged
+
+    # 汇总
+    all_nums = sorted(set(videos.keys()) | set(subs.keys()), key=lambda x: int(x) if x.isdigit() else 0)
+    episodes = []
+    for num in all_nums:
+        v_ok = num in videos
+        s_ok = num in subs
+        lanes = set()
+        if s_ok:
+            for item in subs[num]:
+                if isinstance(item, tuple):
+                    lanes.add(item[0])
+                else:
+                    ln = match_lane(item, SUB_LANES) or SUB_DEFAULT_TRACK
+                    lanes.add(ln)
+        episodes.append({
+            "num": num,
+            "has_video": v_ok,
+            "has_sub": s_ok,
+            "sub_lanes": sorted(lanes),
+        })
+
+    video_nums = sorted(videos.keys(), key=lambda x: int(x) if x.isdigit() else 0)
+    sub_nums   = sorted(subs.keys(),   key=lambda x: int(x) if x.isdigit() else 0)
+    matched    = sorted(set(video_nums) & set(sub_nums), key=lambda x: int(x) if x.isdigit() else 0)
+    miss_sub   = sorted(set(video_nums) - set(sub_nums), key=lambda x: int(x) if x.isdigit() else 0)
+    miss_video = sorted(set(sub_nums) - set(video_nums), key=lambda x: int(x) if x.isdigit() else 0)
+
+    # min / max 只看纯数字编号
+    numeric = [int(n) for n in all_nums if n.isdigit()]
+    return {
+        "episodes": episodes,
+        "video_count": len(video_nums),
+        "sub_count": len(sub_nums),
+        "matched_count": len(matched),
+        "missing_sub_count": len(miss_sub),
+        "missing_video_count": len(miss_video),
+        "min_ep": min(numeric) if numeric else None,
+        "max_ep": max(numeric) if numeric else None,
+    }
 
 
 # ============================ 字幕反拆分导出 ============================

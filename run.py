@@ -33,8 +33,11 @@ def bump_static_versions():
         text = raw.decode('utf-8-sig', errors='replace')
         new, n = pat.subn(rf'\1?v={ver}\2', text)
         if n > 0:
-            out = '\ufeff' + new.lstrip('\ufeff') if has_bom else new
-            html.write_text(out, encoding='utf-8')
+            # 用 write_bytes 写入，避免 Windows 下 write_text 把 '\n' 翻译成 '\r\n'
+            # 导致每次启动行尾 \r 不断累积、文件持续膨胀
+            body = new.lstrip('\ufeff')
+            data = (b'\xef\xbb\xbf' if has_bom else b'') + body.encode('utf-8')
+            html.write_bytes(data)
             changed += 1
     if changed > 0:
         print(f"[cache] bumped ?v= → {ver} in {changed} html file(s)")

@@ -144,6 +144,11 @@ async def page_role_sheet():
     return _html_page("role_sheet.html")
 
 
+@app.get("/split", response_class=HTMLResponse)
+async def page_split():
+    return _html_page("split.html")
+
+
 def _zip_response(data: bytes, filename: str) -> StreamingResponse:
     return StreamingResponse(
         io.BytesIO(data),
@@ -458,6 +463,7 @@ async def jianying_generate(
     name_prefix: str = Form(default=""),
     subtitle_dir_en: str = Form(default=""),
     subtitle_dir_zh: str = Form(default=""),
+    ep_filter: str = Form(default=""),
 ):
     if groups and len(groups) == len(files):
         uploads = [(g or "video", rel or up.filename or "unnamed", up.file)
@@ -468,7 +474,33 @@ async def jianying_generate(
                    for up, rel in zip(files, rels)]
     result = jy.generate(mode, uploads, video_dir, subtitle_dir,
                          draft_folder, name_prefix,
-                         subtitle_dir_en, subtitle_dir_zh)
+                         subtitle_dir_en, subtitle_dir_zh,
+                         ep_filter=ep_filter.strip())
+    if "error" in result:
+        return fail(result["error"], 400)
+    return ok(result)
+
+
+@app.post("/api/jianying/inspect")
+async def jianying_inspect(
+    mode: str = Form(default="upload"),
+    files: list[UploadFile] = File(default=[]),
+    rels: list[str] = Form(default=[]),
+    groups: list[str] = Form(default=[]),
+    video_dir: str = Form(default=""),
+    subtitle_dir: str = Form(default=""),
+    subtitle_dir_en: str = Form(default=""),
+    subtitle_dir_zh: str = Form(default=""),
+):
+    """只扫描目录返回集号统计，不生成草稿。供前端预览和范围选择用。"""
+    if groups and len(groups) == len(files):
+        uploads = [(g or "video", rel or up.filename or "unnamed", up.file)
+                   for up, rel, g in zip(files, rels, groups)]
+    else:
+        uploads = [(rel or up.filename or "unnamed", up.file)
+                   for up, rel in zip(files, rels)]
+    result = jy.inspect(mode, uploads, video_dir, subtitle_dir,
+                        subtitle_dir_en, subtitle_dir_zh)
     if "error" in result:
         return fail(result["error"], 400)
     return ok(result)
@@ -613,6 +645,74 @@ async def role_sheet_convert(
             return fail(f"无法写入 {out_file}：{e}", 400)
 
     # 兜底：返回 base64 让前端弹下载
+    return ok({
+        "report": report,
+        "download_name": f"{safe_sheet}.xlsx",
+        "xlsx_base64": base64.b64encode(out_bytes).decode("ascii"),
+    })
+
+
+# ============================ 本地化清单填译 ============================
+
+@app.post("/api/role-sheet/fill")
+async def role_sheet_fill(
+    main: UploadFile = File(...),
+    ref: UploadFile = File(None),
+    ref_text: str = Form(""),
+    sheet_name: str = Form("本地化清单"),
+    merge_sep: str = Form("/"),
+    preview_only: str = Form("false"),
+    output_path: str = Form(""),
+    force: str = Form("false"),
+):
+    import base64, re
+    is_preview = preview_only.strip().lower() in ('true', '1', 'yes')
+    safe_sheet = re.sub(r'[\\/:*?"<>|]', '_',
+                        (sheet_name or "本地化清单").strip() or "本地化清单")
+    main_bytes = await main.read()
+    if ref is not None and ref.filename:
+        ref_bytes = await ref.read()
+        ref_filename = ref.filename
+    else:
+        ref_bytes = (ref_text or "").encode("utf-8-sig")
+        ref_filename = "ref_pasted.tsv"
+    if not ref_bytes or not ref_bytes.strip():
+        return fail("请上传参考清单文件 或 粘贴参考清单文本", 400)
+    try:
+        out_bytes, report = rs.fill_localization_checklist(
+            main_bytes, ref_bytes,
+            main_filename=(main.filename or "main.xlsx"),
+            ref_filename=ref_filename,
+            merge_sep=(merge_sep or "/"),
+            sheet_name=(sheet_name or "本地化清单"),
+            preview_only=is_preview,
+        )
+    except ValueError as e:
+        return fail(str(e), 400)
+    except RuntimeError as e:
+        return fail(str(e), 500)
+
+    if is_preview:
+        return ok({"report": report})
+
+    raw_out = (output_path or "").strip()
+    if raw_out:
+        if raw_out.lower().endswith(".xlsx"):
+            out_file = Path(raw_out)
+        else:
+            out_file = Path(raw_out) / f"{safe_sheet}.xlsx"
+        if out_file.exists() and force.strip().lower() not in ("true", "1", "yes"):
+            return JSONResponse(
+                {"ok": False, "msg": "目标文件已存在", "confirm_needed": True,
+                 "existing": [str(out_file)]},
+                status_code=409)
+        try:
+            out_file.parent.mkdir(parents=True, exist_ok=True)
+            out_file.write_bytes(out_bytes)
+            return ok({"report": report, "saved_path": str(out_file.resolve())})
+        except OSError as e:
+            return fail(f"无法写入 {out_file}：{e}", 400)
+
     return ok({
         "report": report,
         "download_name": f"{safe_sheet}.xlsx",

@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>字幕智能分段 · 字幕工具箱</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="style.css?v=20261118-1030" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <style>
+    .split-progress { margin-top: 14px; }
+    .split-progress-track { height: 8px; border-radius: 6px; background: rgba(255,255,255,.1); overflow: hidden; }
+    .split-progress-fill { height: 100%; width: 0; border-radius: 6px; background: linear-gradient(90deg, #3ddc97, #7fe3c0); transition: width .25s ease; }
+    .split-progress-label { font-size: 12px; opacity: .75; margin-top: 6px; }
+    .lang-tip { font-size: 12px; opacity: .7; margin: 6px 0 0; }
+    .seg-preview { font-family: "Noto Sans SC", sans-serif; }
+    .seg-preview .orig { opacity: .6; }
+    .seg-preview .arrow { opacity: .4; padding: 0 6px; }
+    .seg-preview .seg-line { display: inline-block; vertical-align: top; margin: 2px 10px 2px 0; padding: 3px 10px; border-radius: 5px; background: rgba(61,220,151,.12); color: #7fe3c0; white-space: nowrap; line-height: 1.7; border: 1px solid rgba(61,220,151,.18); }
+    .seg-preview .seg-line .tc { display: inline-block; margin-right: 6px; }
+    .seg-preview .tc { font-size: 11px; opacity: .45; margin-right: 5px; }
+    .seg-stat { display: inline-block; padding: 4px 12px; margin: 0 8px 8px 0; border-radius: 6px; background: rgba(255,255,255,.06); font-size: 13px; }
+    .seg-stat b { color: #7fe3c0; font-size: 15px; }
+  </style>
+</head>
+<body>
+  <div class="bg-layer" aria-hidden="true"></div>
+  <header class="hud-top">
+    <a href="index.html" class="brand"><span class="brand-mark" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="1.5" rx=".5" fill="#fafffd"/><rect x="2" y="7.25" width="9" height="1.5" rx=".5" fill="#fafffd" opacity=".9"/><rect x="2" y="10.5" width="11" height="1.5" rx=".5" fill="#fafffd" opacity=".75"/></svg>
+      </span>字幕工具箱</a>
+    <nav class="hud-nav">
+      <a href="index.html">首页</a>
+      <div class="nav-group">
+        <a class="group-btn" href="javascript:void(0)">标准流程</a>
+        <div class="dropdown">
+          <a href="preprocess.html">1. 预处理</a>
+          <a href="reorganize.html">2. 语种重组</a>
+          <a href="replace.html">3. 术语替换</a>
+          <a href="fix.html">4. SRT 修复</a>
+          <a href="flatten.html">5. 目录平铺</a>
+        </div>
+      </div>
+      <div class="nav-group active-wrap">
+        <a class="group-btn active" href="javascript:void(0)">辅助工具</a>
+        <div class="dropdown">
+          <a href="align.html">跨语言对齐</a>
+          <a href="identify.html">术语识别</a>
+          <a href="rename.html">重命名同步</a>
+          <a href="jianying.html">剪映草稿</a>
+          <a href="role_sheet.html">角色表转换</a>
+          <a href="split.html" class="active">字幕智能分段</a>
+        </div>
+      </div>
+      <button type="button" class="ai-settings-btn" id="btnAiSettings" title="AI 设置">⚙ AI</button>
+    </nav>
+  </header>
+  <main class="hud-main">
+    <h1 class="page-title">字幕智能分段</h1>
+    <p class="page-sub">按中 / 日 / 韩 / 泰 / 英 / 西 / 德 / 法八种语言语法断句，把超长字幕切成多条短字幕；每条容量 = 每行预算 × 行数，文本连续不换行</p>
+
+    <section class="panel">
+      <div class="panel-head"><span class="panel-dot"></span><h2>1. 上传与配置</h2></div>
+      <p class="card-desc">
+        拖入整个字幕文件夹或 ZIP 压缩包。工具用 AI 按语言语法把超长字幕切成<b>多条独立字幕</b>：一条能装多少，由「<b>每行预算 × 每条行数</b>」决定（如日语 10 字 × 2 行 = 每条 20 字；英语 10 词 × 3 行 = 每条 30 词）。这里的「行数」只是容量倍数，<b>字幕文本连续、不会插入换行符</b>。按词计数的语言另设<b>每行字符上限</b>，兼顾单词长短。各条长度与时长都尽量平均，不拆开单词、不留「只剩一两个字」的尾巴。
+      </p>
+      <div class="field">
+        <label>字幕（ZIP 压缩包 或 直接拖入文件夹）</label>
+        <div class="drop-zone" id="dropZoneSplit">
+          <input type="file" id="subsSplitZip" accept=".zip" />
+          <input type="file" id="subsSplitFolder" webkitdirectory directory multiple hidden />
+          <div class="drop-hint">
+            <span class="drop-icon">📁</span>
+            <span>上半区点击选 ZIP / 下半区点击选文件夹，或直接拖入文件夹</span>
+          </div>
+        </div>
+      </div>
+      <div class="opts">
+        <label>语言：
+          <select id="langSelect" class="scene-select">
+            <option value="zh">中文</option>
+            <option value="ja" selected>日语</option>
+            <option value="ko">韩语</option>
+            <option value="th">泰语</option>
+            <option value="en">英语</option>
+            <option value="es">西班牙语</option>
+            <option value="de">德语</option>
+            <option value="fr">法语</option>
+          </select>
+        </label>
+        <label><span id="limitLabelText">每行字数上限</span>：
+          <input type="number" id="charLimit" min="2" max="60" value="10" style="width:70px" />
+        </label>
+        <label id="charUpperLabel" hidden>每行字符上限：
+          <input type="number" id="charUpper" min="0" max="200" value="50" style="width:70px" title="词语言的视觉宽度上限（含空格标点）；填 0 表示不限制，只按词数控制" />
+        </label>
+        <label>每条行数（容量倍数）：
+          <span id="maxLinesValue" style="display:inline-block;min-width:24px;padding:2px 8px;border-radius:5px;background:rgba(255,255,255,.08);text-align:center" title="行数只是容量倍数：一条可容纳 每行预算 × 行数 的字/词，文本不会换行">2 行</span>
+          <span id="cueCapacityValue" style="opacity:.62;font-size:12px;margin-left:4px">≈ 每条 ≤ 20 字</span>
+        </label>
+        <label>每批条数：
+          <input type="number" id="batchSize" min="1" max="60" value="20" style="width:64px" title="一次发给 AI 的字幕条数，越小越稳但请求更多" />
+        </label>
+      </div>
+      <p class="lang-tip" id="langTip">日语默认每行 ≤ 10 字，每条 2 行 ≈ 每条 20 字；在助词、句尾、标点等语法边界断句，字幕文本连续不换行。</p>
+      <div class="actions">
+        <button type="button" id="btnSplit">开始分段</button>
+      </div>
+      <div class="status" id="statusSplit"></div>
+      <div class="split-progress" id="splitProgress" hidden>
+        <div class="split-progress-track"><div class="split-progress-fill" id="splitProgressFill"></div></div>
+        <div class="split-progress-label" id="splitProgressLabel">准备中…</div>
+      </div>
+    </section>
+
+    <section class="panel" id="resultPanel" hidden>
+      <div class="panel-head"><span class="panel-dot"></span><h2>2. 分段结果</h2></div>
+      <p class="compare-summary" id="resultSummary"></p>
+      <div id="segStats" class="seg-stat-row"></div>
+      <div class="diff-table-wrap" style="max-height:520px;overflow:auto">
+        <table class="diff-table seg-preview">
+          <thead>
+            <tr><th style="width:56px">来源</th><th>原文 → 分段后</th></tr>
+          </thead>
+          <tbody id="segBody"></tbody>
+        </table>
+      </div>
+      <p class="hint" id="previewMoreHint" hidden>仅预览前 100 条发生变化的字幕，导出文件包含全部内容。</p>
+      <div class="actions" style="margin-top:16px">
+        <button type="button" id="btnDownloadZip">下载 ZIP</button>
+        <button type="button" id="btnExportFolder">导出到文件夹</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- AI 设置 Modal -->
+  <div id="aiSettingsModal" class="modal" hidden>
+    <div class="modal-backdrop"></div>
+    <div class="modal-content modal-sm">
+      <div class="modal-header">
+        <h3>⚙ AI 设置</h3>
+        <button type="button" class="modal-close" id="aiSettingsClose">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="ai-settings-form">
+          <label class="ai-label">智谱 API Key</label>
+          <input type="password" id="aiApiKeyInput" class="ai-input" placeholder="粘贴你的智谱 API Key" autocomplete="off" />
+          <p class="ai-help">
+            Key 仅保存在本浏览器（localStorage），不会上传到任何服务器。<br>
+            获取地址：<a href="https://open.bigmodel.cn/usercenter/apikeys" target="_blank" rel="noopener">智谱开放平台 → API Keys</a>
+          </p>
+          <div class="ai-status" id="aiKeyStatus"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-small btn-danger" id="btnAiKeyClear">清除 Key</button>
+        <button type="button" class="btn-small" id="btnAiKeySave">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="srt-core.js?v=20261118-1030"></script>
+  <script src="split-engine.js?v=20261118-1030"></script>
+  <script src="ai.js?v=20261118-1030"></script>
+  <script src="utils.js?v=20261118-1030"></script>
+  <script>
+  (function () {
+    'use strict';
+
+    // ========== 状态 ==========
+    let sourceType = null;          // 'zip' | 'folder' | 'drop'
+    let subtitleFiles = [];         // [{name, content}]
+    let resultFiles = [];           // [{name, content, stats}]
+    let changedRows = [];           // [{file, srcIndex, start, end, original, lines}]
+    let busy = false;
+
+    // 语言元数据（默认值/单位/行数上限）以引擎为单一数据源
+    const LANGS = SplitEngine.LANG_CONFIG;
+    const LANG_TIP = {
+      zh: '中文默认每行 ≤ 12 字，每条 2 行 ≈ 每条 24 字；在标点、连词与短语边界断句，不切开词语。',
+      ja: '日语默认每行 ≤ 10 字，每条 2 行 ≈ 每条 20 字；在助词、句尾、标点等语法边界断句。',
+      ko: '韩语默认每行 ≤ 8 词 / ≤ 20 字符，每条 2 行 ≈ 每条 16 词；在终结语尾、连接语尾断句，不拆开完整单词。',
+      th: '泰语默认每行 ≤ 20 音节，每条 2 行 ≈ 每条 40 音节；在短语边界与标点处断句，绝不拆开声调符号。',
+      en: '英语默认每行 ≤ 10 词 / ≤ 50 字符，每条 3 行 ≈ 每条 30 词；在连词与从句边界断句，不拆开单词。',
+      es: '西班牙语默认每行 ≤ 10 词 / ≤ 50 字符，每条 3 行 ≈ 每条 30 词；不拆词，¿ / ¡ 与后文成对绑定。',
+      de: '德语默认每行 ≤ 10 词 / ≤ 55 字符，每条 3 行 ≈ 每条 30 词；超长复合词保持完整、允许独占一条。',
+      fr: '法语默认每行 ≤ 10 词 / ≤ 50 字符，每条 3 行 ≈ 每条 30 词；不拆词，窄不换行空格与省文保持完整。',
+    };
+
+    const $ = id => document.getElementById(id);
+    const statusSplit = $('statusSplit');
+    const btnSplit = $('btnSplit');
+
+    function setStatus(msg, cls) {
+      statusSplit.className = 'status' + (cls ? ' ' + cls : '');
+      statusSplit.textContent = msg || '';
+    }
+
+    // ========== 上传交互 ==========
+    const dropZone = $('dropZoneSplit');
+    const zipInput = $('subsSplitZip');
+    const folderInput = $('subsSplitFolder');
+
+    dropZone.addEventListener('click', (e) => {
+      const rect = dropZone.getBoundingClientRect();
+      (e.clientY - rect.top < rect.height / 2 ? zipInput : folderInput).click();
+    });
+    zipInput.addEventListener('change', e => {
+      if (e.target.files.length) { sourceType = 'zip'; setStatus(`已选择 ZIP：${e.target.files[0].name}，点击「开始分段」`, 'ok'); }
+    });
+    folderInput.addEventListener('change', e => {
+      if (e.target.files.length) { sourceType = 'folder'; setStatus(`已选择文件夹，共 ${e.target.files.length} 个文件，点击「开始分段」`, 'ok'); }
+    });
+    ['dragover', 'dragenter'].forEach(evt => dropZone.addEventListener(evt, e => {
+      e.preventDefault(); e.stopPropagation(); dropZone.classList.add('drag-over');
+    }));
+    ['dragleave', 'drop'].forEach(evt => dropZone.addEventListener(evt, e => {
+      e.preventDefault(); e.stopPropagation(); dropZone.classList.remove('drag-over');
+    }));
+    dropZone.addEventListener('drop', async e => {
+      sourceType = 'drop';
+      try {
+        const files = await extractSrtFromDropEvent(e);
+        if (!files.length) { showToast('拖入的内容中未找到 SRT 文件', 'warning'); sourceType = null; return; }
+        droppedFiles = files;
+        setStatus(`已识别 ${files.length} 个 SRT 文件，点击「开始分段」`, 'ok');
+      } catch (err) {
+        showToast('读取拖入内容失败：' + err.message, 'error'); sourceType = null;
+      }
+    });
+    let droppedFiles = [];
+
+    async function loadFiles() {
+      const files = [];
+      if (sourceType === 'zip') {
+        const z = zipInput.files[0];
+        if (!z) throw new Error('请选择 ZIP 文件');
+        const zip = await JSZip.loadAsync(await z.arrayBuffer());
+        for (const [name, f] of Object.entries(zip.files)) {
+          if (!f.dir && name.toLowerCase().endsWith('.srt')) files.push({ name, content: await f.async('string') });
+        }
+      } else if (sourceType === 'folder') {
+        for (const item of extractSrtFromFileList(folderInput.files)) {
+          files.push({ name: item.name, content: await item.file.text() });
+        }
+      } else if (sourceType === 'drop') {
+        for (const it of droppedFiles) files.push({ name: it.name, content: await it.file.text() });
+      }
+      if (!files.length) throw new Error('未找到任何 .srt 文件');
+      return files;
+    }
+
+    // ========== 配置：切换语言时联动预算单位、默认值、字符上限、行数上限、提示 ==========
+    function updateCapacityHint() {
+      const lang = $('langSelect').value;
+      const cfg = LANGS[lang] || LANGS.ja;
+      const perLine = parseInt($('charLimit').value, 10) || cfg.limit;
+      const cap = perLine * cfg.maxLinesPerCue;
+      $('cueCapacityValue').textContent = `≈ 每条 ≤ ${cap} ${cfg.unitName}`;
+    }
+    function applyLangConfig() {
+      const lang = $('langSelect').value;
+      const cfg = LANGS[lang] || LANGS.ja;
+      $('charLimit').value = cfg.limit;
+      $('limitLabelText').textContent = '每行' + cfg.unitName + '上限';
+      // 字符上限只对「按词计数」的语言有意义（字素语言本身就是按字素预算）
+      const isWord = cfg.unit === 'word';
+      $('charUpperLabel').hidden = !isWord;
+      $('charUpper').value = isWord ? (cfg.charUpper || 0) : 0;
+      $('maxLinesValue').textContent = cfg.maxLinesPerCue + ' 行';
+      $('langTip').textContent = LANG_TIP[lang] || LANG_TIP.ja;
+      updateCapacityHint();
+    }
+    $('langSelect').addEventListener('change', applyLangConfig);
+    $('charLimit').addEventListener('input', updateCapacityHint);
+    applyLangConfig();
+
+    // ========== 进度 ==========
+    function showProgress(show) { $('splitProgress').hidden = !show; if (show) setBar(0, ''); }
+    function setBar(pct, label) {
+      $('splitProgressFill').style.width = Math.max(0, Math.min(100, pct)) + '%';
+      $('splitProgressLabel').textContent = label;
+    }
+
+    // ========== 主流程 ==========
+    btnSplit.addEventListener('click', async () => {
+      if (busy) return;
+      if (!getZhipuApiKey()) { showToast('请先点击右上角「⚙ AI」配置智谱 API Key', 'warning'); return; }
+      try {
+        subtitleFiles = await loadFiles();
+      } catch (err) { setStatus('读取失败：' + err.message, 'err'); return; }
+
+      const lang = $('langSelect').value;
+      const limit = parseInt($('charLimit').value, 10) || (LANGS[lang] || LANGS.ja).limit;
+      // 留空=用语言默认；填 0=关闭字符约束（只按词数控制）
+      const charUpper = $('charUpper').value === '' ? undefined : parseInt($('charUpper').value, 10);
+      const batchSize = parseInt($('batchSize').value, 10) || 20;
+
+      busy = true; btnSplit.disabled = true;
+      resultFiles = []; changedRows = [];
+      showProgress(true);
+      let doneFiles = 0;
+      const grandTotal = subtitleFiles.length;
+
+      try {
+        for (const f of subtitleFiles) {
+          setBar(Math.round(doneFiles / grandTotal * 100), `处理文件 ${doneFiles + 1}/${grandTotal}：${f.name}`);
+          const subs = parseSrt(f.content);
+          const res = await SplitEngine.splitSubtitles(subs, {
+            lang, limit, charUpper, batchSize,
+            chat: (messages, options) => zhipuChat(messages, options),
+          }, (b, total, msg) => {
+            setBar(Math.round((doneFiles + b / Math.max(1, total)) / grandTotal * 100), `${f.name} · ${msg}`);
+          });
+          resultFiles.push({ name: f.name, content: generateSrt(res.subs), stats: res.stats });
+
+          // 按来源序号分组，构建「原文 → 多条分段」预览
+          const origMap = new Map(subs.map(s => [s.index, SplitEngine.normalizeLine(s.text)]));
+          const groups = new Map(); // srcIndex -> { original, lines:[{text,start,end}] }
+          for (const out of res.subs) {
+            if (out._srcIndex === undefined) continue;
+            if (!groups.has(out._srcIndex)) {
+              groups.set(out._srcIndex, { original: origMap.get(out._srcIndex) ?? '', lines: [] });
+            }
+            groups.get(out._srcIndex).lines.push({ text: out.text, start: out.start, end: out.end });
+          }
+          for (const [srcIndex, g] of groups) {
+            if (g.lines.length <= 1 && g.lines[0]?.text === g.original) continue; // 未变化
+            changedRows.push({ file: f.name, srcIndex, original: g.original, lines: g.lines });
+          }
+          doneFiles++;
+        }
+
+        setBar(100, '完成');
+        setStatus(`分段完成：共处理 ${grandTotal} 个文件`, 'ok');
+        renderResult();
+      } catch (err) {
+        setStatus('分段失败：' + err.message, 'err');
+        showToast('分段失败：' + err.message, 'error');
+      } finally {
+        busy = false; btnSplit.disabled = false;
+      }
+    });
+
+    // ========== 结果渲染 ==========
+    function renderResult() {
+      $('resultPanel').hidden = false;
+      const agg = resultFiles.reduce((a, f) => {
+        a.total += f.stats.total; a.segmented += f.stats.segmented;
+        a.aiOk += f.stats.aiOk; a.aiFail += f.stats.aiFail;
+        a.rebalanced += (f.stats.rebalanced || 0); a.wideRows += (f.stats.wideRows || 0);
+        a.after += f.stats.after;
+        return a;
+      }, { total: 0, segmented: 0, aiOk: 0, aiFail: 0, rebalanced: 0, wideRows: 0, after: 0 });
+
+      $('resultSummary').textContent = `已处理 ${resultFiles.length} 个字幕文件：${agg.total} 条原文中 ${agg.segmented} 条超容量被切成多条，输出 ${agg.after} 条字幕（文本连续、无换行）。`;
+      $('segStats').innerHTML = [
+        `<span class="seg-stat">超容量条 <b>${agg.segmented}</b></span>`,
+        `<span class="seg-stat">字符超宽 <b>${agg.wideRows}</b></span>`,
+        `<span class="seg-stat">AI 断句 <b>${agg.aiOk}</b></span>`,
+        `<span class="seg-stat">规则兜底 <b>${agg.aiFail}</b></span>`,
+        `<span class="seg-stat">均分重排 <b>${agg.rebalanced}</b></span>`,
+        `<span class="seg-stat">输出总条数 <b>${agg.after}</b></span>`,
+      ].join('');
+
+      const body = $('segBody');
+      body.innerHTML = '';
+      const LIMIT = 100;
+      const show = changedRows.slice(0, LIMIT);
+      const tc = ms => { const s = Math.floor(ms/1000), m = Math.floor(s/60), h = Math.floor(m/60); return `${String(h).padStart(2,'0')}:${String(m%60).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`; };
+      for (const r of show) {
+        const tr = document.createElement('tr');
+        const segHtml = r.lines.map(l => `<span class="seg-line"><span class="tc">${tc(l.start)}</span>${escapeHtml(l.text).replace(/\n/g, '<br>')}</span>`).join('');
+        tr.innerHTML = `<td>${escapeHtml(r.file)}<br><span style="opacity:.5;font-size:11px">#${r.srcIndex}</span></td>` +
+          `<td><span class="orig">${escapeHtml(r.original)}</span><span class="arrow">→</span>${segHtml}</td>`;
+        body.appendChild(tr);
+      }
+      $('previewMoreHint').hidden = changedRows.length <= LIMIT;
+      if (changedRows.length > LIMIT) $('previewMoreHint').textContent = `仅预览前 ${LIMIT} 条发生变化的字幕（共 ${changedRows.length} 条），导出文件包含全部内容。`;
+    }
+
+    // ========== 导出 ==========
+    $('btnDownloadZip').addEventListener('click', async () => {
+      if (!resultFiles.length) return;
+      try {
+        const zip = new JSZip();
+        for (const f of resultFiles) zip.file(f.name, '\ufeff' + f.content);
+        const blob = await zip.generateAsync({ type: 'blob' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'split_result.zip';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        showToast('ZIP 已下载', 'success');
+      } catch (err) { showToast('打包失败：' + err.message, 'error'); }
+    });
+
+    $('btnExportFolder').addEventListener('click', async () => {
+      if (!resultFiles.length) return;
+      const map = resultFiles.map(f => ({ path: f.name, content: '\ufeff' + f.content }));
+      const r = await saveFilesToFolder(map);
+      showToast(r.message, r.success ? 'success' : 'error');
+    });
+
+    // ========== AI 设置 ==========
+    const modal = $('aiSettingsModal');
+    const keyInput = $('aiApiKeyInput');
+    function updateKeyStatus() {
+      const has = !!getZhipuApiKey();
+      $('aiKeyStatus').className = 'ai-status ' + (has ? 'ok' : 'warn');
+      $('aiKeyStatus').textContent = has ? '✓ 已配置 API Key' : '⚠ 尚未配置 API Key，AI 功能不可用';
+      $('btnAiSettings').classList.toggle('ai-active', has);
+    }
+    $('btnAiSettings').addEventListener('click', () => { keyInput.value = getZhipuApiKey(); updateKeyStatus(); modal.hidden = false; });
+    $('aiSettingsClose').addEventListener('click', () => modal.hidden = true);
+    modal.querySelector('.modal-backdrop').addEventListener('click', () => modal.hidden = true);
+    $('btnAiKeySave').addEventListener('click', () => {
+      const key = keyInput.value.trim();
+      if (!key) return showToast('请输入 API Key', 'warning');
+      setZhipuApiKey(key); updateKeyStatus(); modal.hidden = true;
+      showToast('API Key 已保存', 'success');
+    });
+    $('btnAiKeyClear').addEventListener('click', () => {
+      localStorage.removeItem('zhipu_api_key'); keyInput.value = ''; updateKeyStatus();
+    });
+    updateKeyStatus();
+  })();
+  </script>
+</body>
+</html>
